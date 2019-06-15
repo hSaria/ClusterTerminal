@@ -1,0 +1,632 @@
+#!/usr/bin/env python3
+
+import os
+import re
+import socket
+import sys
+import termios
+import threading
+from math import ceil
+from shlex import quote, split
+from time import sleep
+
+MASTER_COLOR = '84,30,22'
+MASTER_HEIGHT_MAX = 200
+MASTER_HEIGHT_MIN = 45
+MENU_CHAR = 19  # CTRL+S. Value from 1 to 26, corresponding to the alphabet.
+SLAVE_COLOR = '0,0,0'
+SLAVE_DISABLED_COLOR = '30,30,30'
+SLAVE_SELECTED_BLUE_SHIFT = 40
+SOCKET_ALIVE_INTERVAL = 0.5  # How often to check for open sockets
+SOCKET_TIMEOUT = 0.0001  # Used to check if socket is still alive
+TERMINAL = None  # Search for the bundle identifier once and set it here
+
+
+class Master:
+    def __init__(self, args, base_command):
+        self.base_command = base_command
+        self.columns = None  # Generate using the aspect ratio
+        self.height = min(max(MASTER_HEIGHT_MIN, args.mw_h), MASTER_HEIGHT_MAX)
+        self.menu = Menu(self.send_char)
+        self.pause = args.pause
+        # Asumption: Launcher checked screen ID before creating master window
+        self.rows = None  # Generate using the aspect ratio
+        self.screen = get_screen_bounds(get_screen(args.screen))
+        self.selected = None
+        self.slave_bg_normal = get_color(args.sw_c) or get_color(SLAVE_COLOR)
+        self.slave_bg_disabled = get_color(
+            args.sw_c_d) or get_color(SLAVE_DISABLED_COLOR)
+        self.slaves = []
+        self.socket = socket_create()
+        self.window_id = get_window_id(os.ttyname(sys.stdout.fileno()))
+
+        self.create_slaves(args.item)
+        self.socket_connected_check()  # Start the socket check
+
+        # Add binds to menu
+        for bind in [
+                Bind(self.add_items, 'a', '[a]dd items'),
+                Bind(self.enable_windows, 'e', '[e]nable'),
+                Bind(self.sort_slaves, 'o', 's[o]rt'),
+                Bind(self.move_screen, 's', 'change [s]creen'),
+                Bind(self.arrange_windows, 'r', '[r]earrage'),
+                Bind(self.column_decrease, '<', '[<|>] change column count',
+                     True),
+                Bind(self.column_increase, '>', remain=True),
+                Bind(self.exit, 'x', 'e[x]it'),
+        ]:
+            self.menu.binds.append(bind)
+        self.menu.listen()
+
+    def create_slaves(self, items):
+        for item in items:
+            self.slaves.append(
+                Slave(self.base_command, self.slave_bg_normal,
+                      self.slave_bg_disabled, item, self.socket))
+            # Inter-window pause, but don't pause after last window
+            if items[-1] != item: sleep(self.pause / 1000)
+        self.arrange_windows()
+
+    def find_slave(self, location):
+        for slave in self.slaves:
+            if slave.window_position.location == location: return slave
+
+    def refresh_selection(self):
+        # Confirm current selection exists. If not, pick first slave
+        if self.selected == None or self.find_slave(
+                self.selected.window_position.location) == None:
+            self.selected = self.slaves[0]
+            return True  # Changed
+
+    def send_char(self, char):
+        for slave in self.slaves:
+            try:
+                slave.send_char(char)
+            except Exception as e:
+                self.slaves.remove(slave)
+
+    def socket_connected_check(self):
+        def check():
+            while True:
+                dead_slaves = []
+                for slave in self.slaves:
+                    try:
+                        slave.conn.recv(1)
+                    except socket.timeout:
+                        continue  # Timed-out; someone is still there!
+                    dead_slaves.append(slave)
+                if self.slaves == dead_slaves: os._exit(0)  # Everyone's dead
+
+                for slave in dead_slaves:  # Remove dead slaves
+                    self.slaves.remove(slave)
+
+                sleep(SOCKET_ALIVE_INTERVAL)
+
+        t = threading.Thread(target=check)
+        t.start()
+
+    def update_layout(self, new_column_count):
+        self.columns = max(1, min(len(self.slaves), new_column_count))
+        self.rows = ceil(len(self.slaves) / self.columns)
+
+    def add_items(self):
+        items = Menu.prompt('Items')
+        # shelx.split to get array of arguments
+        if items.strip() != '': self.create_slaves(split(items))
+
+    def arrange_windows(self):
+        # Remove slaves that we can't find anymore (closed most likely)
+        for s in [x for x in self.slaves if get_window(x.window_id) == None]:
+            self.slaves.remove(s)
+
+        positions, self.columns = generate_positions(self.screen, self.columns,
+                                                     len(self.slaves),
+                                                     self.height)
+        self.update_layout(self.columns)
+
+        for slave, position in zip(self.slaves, positions[1:]):
+            slave.window_position = position
+            slave.window_position.move_window(get_window(slave.window_id))
+        positions[0].move_window(get_window(self.window_id))  # Master window
+        self.refresh_selection()
+
+    def column_decrease(self):
+        current = self.columns
+        self.update_layout(self.columns - 1)
+        if current != self.columns: self.arrange_windows()
+
+    def column_increase(self):
+        current = self.columns
+        self.update_layout(self.columns + 1)
+        if current != self.columns: self.arrange_windows()
+
+    def enable_windows(self):  # TODO
+        def update_selection(x, y):
+            if self.refresh_selection(): return  # Selection changed; leave
+
+            for i in range(1, max(self.rows, self.columns) + 1):
+                new_x = self.selected.window_position.location[0] + x * i
+                new_y = self.selected.window_position.location[1] + y * i
+
+                # Prevent out of bounds
+                new_x = min(self.columns - 1, new_x)
+                new_y = min(self.rows - 1, new_y)
+
+                slave = self.find_slave([new_x, new_y])
+                if slave != None:
+                    self.selected.update_state(selected=False)
+                    self.selected = slave
+                    self.selected.update_state(selected=True)
+                    break
+
+        self.refresh_selection()
+        self.selected.update_state(selected=True)  # Highlight selected
+
+        def disable_odd():
+            for slave in self.slaves[1::2]:
+                slave.update_state(enabled=False)
+
+        def enable_all():
+            for slave in self.slaves:
+                slave.update_state(enabled=True)
+
+        def toggle_all():
+            for slave in self.slaves:
+                slave.update_state(enabled=not slave.enabled)
+
+        def toggle_selected():
+            self.selected.update_state(enabled=not self.selected.enabled)
+
+        def move_up():
+            update_selection(0, -1)
+
+        def move_down():
+            update_selection(0, 1)
+
+        def move_left():
+            update_selection(-1, 0)
+
+        def move_right():
+            update_selection(1, 0)
+
+        menu = Menu()
+        for bind in [
+                Bind(move_up, 'w', '[WASD] move selection', True),
+                Bind(move_down, 's', remain=True),
+                Bind(move_left, 'a', remain=True),
+                Bind(move_right, 'd', remain=True),
+                Bind(toggle_selected, ' ', '[space] toggle selection', True),
+                Bind(disable_odd, 'o', 'disable every [o]ther', True),
+                Bind(enable_all, 'n', 'e[n]able all', True),
+                Bind(toggle_all, 't', '[t]oggle enabled', True),
+        ]:
+            menu.binds.append(bind)
+        menu.main()
+
+        self.selected.update_state(selected=False)  # Unhighlight selected
+
+    def exit(self):
+        self.slaves = []  # Empty array to signal end for socket check thread
+        cprint()
+        sys.exit()
+
+    def move_screen(self):
+        screen = Menu.prompt(get_screen(reinit=True))
+        if screen.isdigit() and int(screen) > 0:
+            screen = get_screen(int(screen), reinit=True)
+            if screen.startswith('_'):  # Valid response; got coordinates
+                self.screen = get_screen_bounds(screen)
+                self.arrange_windows()
+
+    def sort_slaves(self):
+        def by_id():
+            self.slaves = sorted(self.slaves, key=lambda x: x.id)
+
+        def by_natural():
+            self.slaves = sorted(self.slaves, key=Slave.sort_natural_key)
+
+        menu = Menu()
+        menu.binds.append(Bind(by_id, 'i', '[i]d'))
+        menu.binds.append(Bind(by_natural, 'n', '[n]atural'))
+        menu.main()
+
+        self.arrange_windows()
+
+
+class Slave:
+    ID = 0  # Per-instance ID; increments during __init__
+
+    def __init__(self, base_command, bg_normal, bg_disabled, item, socket):
+        Slave.ID += 1
+        command = ' --mode slave --socket ' + socket.getsockname()
+
+        self.bg_disabled = bg_disabled
+        self.bg_normal = bg_normal
+        self.enabled = True
+        self.selected = False
+
+        self.id = Slave.ID
+        self.item = item
+        self.tab = open_terminal(base_command.format(quote(item) + command))
+        self.window_id = get_window_id(self.tab.tty())
+        self.window_position = None
+
+        self.conn, _ = socket.accept()
+        self.conn.settimeout(SOCKET_TIMEOUT)  # For checking if socket is alive
+
+        # The text color is set to white in case it's someting else
+        self.tab.setNormalTextColor_(get_color('255,255,255'))
+        self.update_state()
+
+    def send_char(self, char):
+        if self.enabled: self.conn.send(str.encode(char))
+
+    def update_state(self, enabled=None, selected=None):
+        if enabled != None: self.enabled = enabled
+        if selected != None: self.selected = selected
+
+        blue_shift = SLAVE_SELECTED_BLUE_SHIFT if self.selected else 0
+        color = self.bg_normal if self.enabled else self.bg_disabled
+        color = get_color('{},{},{}'.format(
+            int(color.redComponent() * 255), int(color.greenComponent() * 255),
+            int(color.blueComponent() * 255 + blue_shift)))
+
+        self.tab.setBackgroundColor_(color)
+
+
+class Bind:
+    def __init__(self, action, key, help=None, remain=False):
+        self.action = action
+        self.key = ord(key.lower())
+        self.help = help
+        self.remain = remain
+
+
+class Menu:
+    init_tc_attr = None
+
+    def __init__(self, send_char=None):
+        self.binds = []
+        self.send_char = send_char
+
+        if Menu.init_tc_attr == None: Menu.init_tc_attr = tc_get()
+
+    def listen(self):
+        listen_msg = '[CTRL+{}] enter menu'.format(chr(MENU_CHAR + 64))
+
+        try:
+            tc_raw()
+            cprint(listen_msg)
+
+            while True:
+                char = sys.stdin.read(1)
+
+                if ord(char) == MENU_CHAR:
+                    self.main()
+                    cprint(listen_msg)
+                elif self.send_char != None:
+                    self.send_char(char)
+        finally:
+            tc_set(Menu.init_tc_attr)
+
+    def main(self):
+        help = ', '.join(['[ESC] cancel'] +
+                         [x.help for x in self.binds if x.help != None])
+        cprint(help)  # Print help for menu
+
+        while True:
+            remain = True  # By default, remain in the menu until told otherwise
+            char = sys.stdin.read(1)
+
+            if ord(char) == 27: break  # ESC
+            if ord(char) == MENU_CHAR:  # Send menu character if hit twice
+                if self.send_char != None: self.send_char(char)
+                break
+
+            for bind in self.binds:
+                if ord(char.lower()) == bind.key:
+                    remain = bind.remain  # Update remain with bind's remain
+                    bind.action()  # Run action of bind
+                    break
+
+            if not remain: break
+
+    def prompt(question, default=''):
+        current_tc_attr = tc_get()  # Save current
+        if Menu.init_tc_attr: tc_set(Menu.init_tc_attr)  # Restore initial
+        cprint(str(question) + ': ')
+
+        try:
+            return input() or default
+        except (KeyboardInterrupt, EOFError):
+            return ''
+        finally:  # Restore previous terminal settings
+            tc_set(current_tc_attr)
+
+
+class WindowPosition:
+    def __init__(self, location, origin, size):
+        self.location = location
+        self.origin = origin
+        self.size = size
+
+    def move_window(self, window):
+        # When resized, macOS honors the screen bounds at the current origin and
+        # won't resize past the bounds. The same thing goes when changing the
+        # origin. This means that if the window was resized or moved but
+        # exceeded the bounds, the operation will not have the desired size. To
+        # get around this, we need to resize the window first such that the new
+        # origin won't exceed the bounds, and resize the window again once moved
+        # in case the resize at the old origin exceeded the screen bounds. Using
+        # `setBounds_` honors the window's minimum bounds, which we don't want
+        # here. Additionally, `setBounds_` uses top-left for it's position (not
+        # cartesian coordinates), and converting cartesian coordinates to a
+        # position is not feasible when using more than one screen.
+        window.setVisible_(0)  # Pop tab if in a multi-tab window
+        window.setSize_(self.size)
+        window.setOrigin_(self.origin)
+        window.setSize_(self.size)  # Don't worry; still really quick
+        window.setFrontmost_(1)  # Above other windows
+
+
+def args_init():
+    import argparse
+
+    p = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+
+    p.add_argument('command',
+                   type=str,
+                   help='the command to run on each item. Can include ' +
+                   'arguments if quoted')
+    p.add_argument('item',
+                   type=str,
+                   nargs='+',
+                   help='one or more items, each passed as a positional ' +
+                   'argument to an instance of the command')
+    p.add_argument('-k',
+                   '--keep',
+                   action='store_true',
+                   help='keep windows open even after command exits cleanly')
+    p.add_argument('-p',
+                   '--pause',
+                   type=int,
+                   metavar='ms',
+                   help='milliseconds to wait between each window',
+                   default=0)
+    p.add_argument('-s',
+                   '--screen',
+                   type=int,
+                   metavar='id',
+                   help='screen number to display windows on',
+                   default=1)
+    p.add_argument('--mw-c',
+                   type=str,
+                   metavar='r,g,b',
+                   help='color of the master window',
+                   default=MASTER_COLOR)
+    p.add_argument('--mw-h',
+                   type=int,
+                   metavar='px',
+                   help='height of the master window',
+                   default=MASTER_HEIGHT_MIN)
+    p.add_argument('--sw-c',
+                   type=str,
+                   metavar='r,g,b',
+                   help='color of a slave window',
+                   default=SLAVE_COLOR)
+    p.add_argument('--sw-c-d',
+                   type=str,
+                   metavar='r,g,b',
+                   help='color of a disabled slave window',
+                   default=SLAVE_DISABLED_COLOR)
+
+    # Hidden arguments relating to program internals
+    p.add_argument('--mode', type=str, help=argparse.SUPPRESS)
+    p.add_argument('--reinit', action='store_true', help=argparse.SUPPRESS)
+    p.add_argument('--socket', type=str, help=argparse.SUPPRESS)
+
+    return p.parse_args()
+
+
+def base_command(args):
+    carried = []
+    carried.append('history -d $(($HISTCMD-1));')
+    carried.append('clear && printf \'\e[3J\'; ')
+    if not args.keep: carried.append('if')
+    carried.append(sys.argv[0])
+    carried.append('--pause')
+    carried.append(str(args.pause))
+    carried.append('--screen')
+    carried.append(str(args.screen))
+    carried.append('--mw-h')
+    carried.append(str(args.mw_h))
+    carried.append('--sw-c')
+    carried.append(str(args.sw_c))
+    carried.append('--sw-c-d')
+    carried.append(str(args.sw_c_d))
+    if args.keep: carried.append('--keep')
+    carried.append(quote(args.command))
+    carried.append('{}')  # Used for the items
+    if not args.keep: carried.append('; then exit; fi')
+    return ' '.join(carried)
+
+
+def cprint(string=None):  # Do not over-use; it runs a command to clear screen
+    os.system('clear && printf \'\e[3J\'')
+    if string != None: print(string, end='', flush=True)
+
+
+def generate_column_default_count(x, y, count, column=1, c_s=None):
+    c_s = c_s or generate_window_params(x, y, count, column)[-1]  # Current
+    n_s = generate_window_params(x, y, count, column + 1)[-1]  # Next
+    ratios = {column: c_s[1] / c_s[0], column + 1: n_s[1] / n_s[0]}
+    if y / x <= ratios[column] or y / x <= ratios[column + 1]:
+        # One of the ratios is above the screen ratio; pick the closest one
+        return min(ratios, key=lambda a: abs(ratios[a] - y / x))
+    # Couldn't find using current or next column count; iterate with + 1
+    return generate_column_default_count(x, y, count, column + 1, n_s)
+
+
+def generate_positions(screen, columns, count, master_height):
+    r, c, s = generate_window_params(screen[2], screen[3] - master_height,
+                                     count, columns)
+
+    # On macOS, the y origin is flipped (0 is bottom, not top)
+    origin_y = screen[1] + master_height
+    master_size = [screen[2], master_height]
+    master_position = [screen[0], screen[1]]
+
+    positions = []
+
+    for y in reversed(range(r)):  # Rows: reversed(bottom to top)
+        for x in range(c):  # Columns: left to right
+            position = [screen[0] + (x * s[0]), origin_y + (y * s[1])]
+            positions.append(WindowPosition([x, abs(r - y - 1)], position, s))
+
+    # First element is always the master
+    positions = [WindowPosition([-1, -1], master_position, master_size)
+                 ] + positions
+
+    return positions, c
+
+
+def generate_window_params(x, y, count, columns):
+    # Use aspect ratio to choose column count if not specified
+    if columns == None: columns = generate_column_default_count(x, y, count)
+    rows = ceil(count / columns)
+    return rows, columns, [x / columns, y / rows]  # Size
+
+
+def get_color(rgb):
+    m = re.match('(\d+),(\d+),(\d+)', rgb)
+    if m:
+        from ScriptingBridge import NSColor
+        return NSColor.colorWithDeviceRed_green_blue_alpha_(
+            int(m.group(1)) / 255,
+            int(m.group(2)) / 255,
+            int(m.group(3)) / 255, 0)
+
+
+def get_screen(screen_number=0, reinit=False):
+    if reinit:  # Get uncached screen info using a new Window Server connection
+        import subprocess
+        command = sys.argv[0] + ' 0 0 --reinit --screen ' + str(screen_number)
+        result = subprocess.run(command, stdout=subprocess.PIPE, shell=True)
+        return result.stdout.decode().strip()
+
+    from ScriptingBridge import NSApplication, NSBundle, NSScreen
+
+    # Hide the Python launcher icon
+    NSBundle.mainBundle().infoDictionary()['LSBackgroundOnly'] = '1'
+
+    # Connect to the Window Server and run initializing code. Without this, the
+    # menu bar of non-main screens is not ignored in visibleFrame()
+    NSApplication.sharedApplication()
+
+    screens = NSScreen.screens()
+    count = screens.count()
+    available = 'Available screens: ' + ', '.join(
+        [str(x) for x in range(1, count + 1)])
+
+    # Asking for list of screens or out of bounds
+    if screen_number == 0: return available  # Asking for list of screen ID's
+    if screen_number > count: return 'Screen does not exist. ' + available
+
+    f = screens.objectAtIndex_(screen_number - 1).visibleFrame()
+    return '_' + ','.join([
+        str(x) for x in [f.origin.x, f.origin.y, f.size.width, f.size.height]
+    ])
+
+
+def get_screen_bounds(s):
+    return [float(x) for x in s[1:].split(',')]  # Get rid of the leading _
+
+
+def get_terminal():
+    from ScriptingBridge import SBApplication
+    global TERMINAL
+    if TERMINAL == None:
+        bundle = 'com.apple.Terminal'
+        TERMINAL = SBApplication.applicationWithBundleIdentifier_(bundle)
+        if TERMINAL == None: sys.exit('Did not find {}'.format(bundle))
+    return TERMINAL
+
+
+def get_window(id):
+    res = get_terminal().windows().objectWithID_(id)
+    return res if res.get() else None
+
+
+def get_window_id(tty):
+    for window in get_terminal().windows():
+        if tty == window.tabs().objectAtIndex_(0).tty(): return window.id()
+
+
+def open_terminal(command):
+    return get_terminal().doScript_in_(command, 0)
+
+
+def socket_connect(location):
+    def tap(s):
+        import fcntl
+        try:
+            while True:
+                for c in s.recv(1024).decode():
+                    fcntl.ioctl(sys.stdin, termios.TIOCSTI, c)
+        except Exception as e:
+            pass
+
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.connect(location)
+
+    t = threading.Thread(target=tap, args=(s, ))
+    t.start()
+
+    return s
+
+
+def socket_create():
+    from tempfile import _get_candidate_names, _get_default_tempdir
+
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.bind(_get_default_tempdir() + '/' + next(_get_candidate_names()))
+    s.listen()
+    return s
+
+
+def sort_natural_key(s, _r=re.compile('(\d+)')):
+    return [int(t) if t.isdigit() else t.lower() for t in _r.split(s.item)]
+
+
+def tc_get():
+    return termios.tcgetattr(sys.stdin.fileno())
+
+
+def tc_raw():
+    import tty
+    tty.setraw(sys.stdin.fileno())
+
+
+def tc_set(settings):
+    termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, settings)
+
+
+args = args_init()
+
+if args.reinit:  # Someone requested screen info
+    print(get_screen(args.screen))
+elif args.mode == None:  # Spawn master window after some init code
+    screen = get_screen(args.screen)
+    if not screen.startswith('_'): sys.exit(screen)  # An error message
+
+    command = ' '.join([quote(x) for x in args.item]) + ' --mode master'
+    t = open_terminal(base_command(args).format(command))
+    t.setBackgroundColor_(get_color(args.mw_c) or get_color(MASTER_COLOR))
+    t.setNormalTextColor_(get_color('255,255,255'))
+elif args.mode == 'master':  # Master window: spawns and controls slaves
+    master = Master(args, base_command(args))
+elif args.mode == 'slave':  # Slave window: runs command and reads input
+    s = socket_connect(args.socket)  # Connect to socket and mirror keystrokes
+    os.system(args.command + ' ' + args.item[0])
+    s.close()  # Close socket
