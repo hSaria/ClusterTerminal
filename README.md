@@ -8,8 +8,20 @@ ClusterTerminal uses the built-in Terminal application of macOS.
 
 # Usage
 
-The most common use case is controlling multiple SSH sessions simultaneously, like:
+The most common use case is controlling multiple SSH sessions simultaneously:
 
     cterm ssh host1 host2
 
-You might want to set up an alias in your `~/.bash_profile`, like `alias cssh="cterm ssh"` and then just call it using `cssh host1 host2`. You don't have to, but it'll save you some time.
+## Tips
+
+You might want to set up an alias for cluster ssh in your `~/.bash_profile`. For instance, `alias cssh="cterm ssh"`, and then call it using `cssh host1 host2`.
+
+In an alias, you can save your normal settings, like `alias cssh="cterm --screen 2 ssh"` to change the default screen.
+
+If you specify the same argument twice, the last instance is the one used. This is useful since you may want to overwrite part of your alias, but not all of it. For example, the following will use screen 1.
+
+    cterm ssh host1 host2 --screen 2 --screen 1
+
+# Limitations
+
+The scripting methods of Terminal do not return the transparency of the window. Instead, they always 0 (completely opaque). Due to that, ClusterTerminal removes any transparency on the windows it spawns.
