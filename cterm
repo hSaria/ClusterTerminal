@@ -140,7 +140,7 @@ class Master:
         self.update_layout(self.columns + 1)
         if current != self.columns: self.arrange_windows()
 
-    def enable_windows(self):  # TODO
+    def enable_windows(self):
         def update_selection(x, y):
             if self.refresh_selection(): return  # Selection changed; leave
 
