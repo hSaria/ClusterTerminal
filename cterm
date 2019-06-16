@@ -11,6 +11,7 @@ from shlex import quote, split
 from time import sleep
 
 BIN_LOCATION = quote(os.path.abspath(sys.argv[0]))
+MASTER_BASE_TITLE = 'ClusterTerminal Master – '
 MASTER_COLOR = '84,30,22'
 MASTER_HEIGHT_MAX = 200
 MASTER_HEIGHT_MIN = 45
@@ -79,12 +80,19 @@ class Master:
             self.selected = self.slaves[0]
             return True  # Changed
 
+    def remove_slave(self, slave):
+        try:
+            self.slaves.remove(slave)
+            self.update_title()
+        except ValueError as e:
+            pass
+
     def send_char(self, char):
         for slave in self.slaves:
             try:
                 slave.send_char(char)
             except Exception as e:
-                self.slaves.remove(slave)
+                self.remove_slave(slave)
 
     def socket_connected_check(self):
         def check():
@@ -99,7 +107,7 @@ class Master:
                 if self.slaves == dead_slaves: os._exit(0)  # Everyone's dead
 
                 for slave in dead_slaves:  # Remove dead slaves
-                    self.slaves.remove(slave)
+                    self.remove_slave(slave)
 
                 sleep(SOCKET_ALIVE_INTERVAL)
 
@@ -110,15 +118,20 @@ class Master:
         self.columns = max(1, min(len(self.slaves), new_column_count))
         self.rows = ceil(len(self.slaves) / self.columns)
 
+    def update_title(self):
+        title = MASTER_BASE_TITLE + ' '.join([x.item for x in self.slaves])
+        os.system('printf \'\\e]0;%s\\a\' \'{}\';'.format(title))
+
     def add_items(self):
         items = Menu.prompt('Items')
         # shelx.split to get array of arguments
         if items.strip() != '': self.create_slaves(split(items))
+        self.update_title()
 
     def arrange_windows(self):
         # Remove slaves that we can't find anymore (closed most likely)
         for s in [x for x in self.slaves if get_window(x.window_id) == None]:
-            self.slaves.remove(s)
+            self.remove_slave(slave)
 
         positions, self.columns = generate_positions(self.screen, self.columns,
                                                      len(self.slaves),
@@ -624,7 +637,7 @@ elif args.mode == None:  # Spawn master window after some init code
     if not screen.startswith('_'): sys.exit(screen)  # An error message
 
     command = ' '.join([quote(x) for x in args.item]) + ' --mode master'
-    title = 'ClusterTerminal Master – ' + ' '.join(args.item)
+    title = MASTER_BASE_TITLE + ' '.join(args.item)
 
     t = open_terminal(base_command(args, title).format(command))
     t.setBackgroundColor_(get_color(args.mw_c) or get_color(MASTER_COLOR))
