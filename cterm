@@ -130,9 +130,12 @@ class Master:
         self.remove_slave(  # Remove slaves with unknown windows; likely closed
             [x for x in self.slaves if get_window(x.window_id) is None])
 
-        positions, self.columns = generate_positions(self.screen, self.columns,
-                                                     len(self.slaves),
-                                                     self.height)
+        if self.columns is None:
+            self.columns = get_columns_default(self.screen[2],
+                                               self.screen[3] - self.height,
+                                               len(self.slaves))
+        positions = get_positions(self.screen, self.columns, len(self.slaves),
+                                  self.height)
         self.update_layout(self.columns)
 
         for slave, position in zip(self.slaves, positions[1:]):
@@ -440,44 +443,6 @@ def cprint(string=None):  # Do not over-use; it runs a command to clear screen
     if string is not None: print(string, end='', flush=True)
 
 
-def generate_column_default_count(x, y, count, column=1, c_s=None):
-    c_s = c_s or generate_window_params(x, y, count, column)[-1]  # Current
-    n_s = generate_window_params(x, y, count, column + 1)[-1]  # Next
-    ratios = {column: c_s[1] / c_s[0], column + 1: n_s[1] / n_s[0]}
-    if y / x <= ratios[column] or y / x <= ratios[column + 1]:
-        # One of the ratios is above the screen ratio; pick the closest one
-        return min(ratios, key=lambda a: abs(ratios[a] - y / x))
-    # Couldn't find using current or next column count; iterate with + 1
-    return generate_column_default_count(x, y, count, column + 1, n_s)
-
-
-def generate_positions(screen, columns, count, master_height):
-    r, c, s = generate_window_params(screen[2], screen[3] - master_height,
-                                     count, columns)
-
-    # On macOS, the y origin is flipped (0 is bottom, not top)
-    origin_y = screen[1] + master_height
-    master_size = [screen[2], master_height]
-    master_position = [screen[0], screen[1]]
-
-    # First element is the master
-    positions = [WindowPosition([-1, -1], master_position, master_size)]
-
-    for y in reversed(range(r)):  # Rows: reversed(bottom to top)
-        for x in range(c):  # Columns: left to right
-            position = [screen[0] + (x * s[0]), origin_y + (y * s[1])]
-            positions.append(WindowPosition([x, abs(r - y - 1)], position, s))
-
-    return positions, c
-
-
-def generate_window_params(x, y, count, columns):
-    if columns is None:  # Use aspect ratio to choose column count if not specified
-        columns = generate_column_default_count(x, y, count)
-    rows = ceil(count / columns)
-    return rows, columns, [x / columns, y / rows]  # Size
-
-
 def get_base_command(args, title='{}'):
     carried = ['history -d $(($HISTCMD-1));']  # Remove from history
     carried.append('clear && printf \'\\e[3J\';')  # Clear screen
@@ -496,6 +461,15 @@ def get_base_command(args, title='{}'):
     return ' '.join(carried)
 
 
+def get_columns_default(w, h, count, columns=1):
+    size = get_window_size(w, h, count, columns)
+    ratio = size[1] / size[0]
+    if ratio > h / w: return {columns: ratio}
+    ratios = {columns: ratio, **get_columns_default(w, h, count, columns + 1)}
+    key, value = min(ratios.items(), key=lambda x: abs(x[1] - h / w))
+    return key if columns == 1 else {key: value}
+
+
 def get_color(*args):
     for color in args:
         m = re.match(r'(\d+),(\d+),(\d+)', color)
@@ -505,6 +479,27 @@ def get_color(*args):
                 int(m.group(1)) / 255,
                 int(m.group(2)) / 255,
                 int(m.group(3)) / 255, 0)
+
+
+def get_positions(screen, columns, count, master_height):
+    rows = ceil(count / columns)
+    size = get_window_size(screen[2], screen[3] - master_height, count,
+                           columns)
+
+    master_window = WindowPosition([-1, -1], [screen[0], screen[1]],
+                                   [screen[2], master_height])
+    positions = [master_window]  # First window position is the master
+
+    for r in reversed(range(rows)):  # Reversed(bottom to top)
+        for c in range(columns):  # Left to right
+            position = [
+                screen[0] + (c * size[0]),
+                screen[1] + master_height + (r * size[1])
+            ]  # The y origin is flipped (0 is bottom, not top
+            location = [c, abs(rows - r - 1)]
+            positions.append(WindowPosition(location, position, size))
+
+    return positions
 
 
 def get_screen(screen_number=0, reinit=False):
@@ -560,6 +555,10 @@ def get_window(window_id):
 def get_window_id(tty):
     for window in get_terminal().windows():
         if tty == window.tabs().objectAtIndex_(0).tty(): return window.id()
+
+
+def get_window_size(w, h, count, columns):
+    return [w / columns, h / ceil(count / columns)]
 
 
 def open_terminal(command):
