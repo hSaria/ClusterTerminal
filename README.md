@@ -24,4 +24,4 @@ If you specify the same argument twice, the last instance is the one used. This 
 
 # Limitations
 
-The scripting methods of Terminal do not return the transparency of the window. Instead, they always 0 (completely opaque). Due to that, ClusterTerminal removes any transparency on the windows it spawns.
+The scripting methods of Terminal do not return the transparency of the window. Instead, they always 0 for the alpha component (completely opaque). Not only that, but you can't set the alpha value either (it remains 0 even when changed). Due to that, ClusterTerminal removes any transparency on the windows it spawns.
