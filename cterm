@@ -131,8 +131,8 @@ class Master:
             [x for x in self.slaves if get_window(x.window_id) is None])
 
         if self.columns is None:
-            self.columns = get_columns_default(self.screen, len(self.slaves))
-        positions = get_positions(self.screen, self.columns, len(self.slaves))
+            self.columns = self.screen.get_columns_default(len(self.slaves))
+        positions = self.screen.get_positions(self.columns, len(self.slaves))
         self.update_layout(self.columns)
 
         for slave, position in zip(self.slaves, positions[1:]):
@@ -363,6 +363,40 @@ class Screen:
                 self.update_bounds(get_screen_bounds(screen))
                 return True  # Changed successfully
 
+    def get_columns_default(self, count, columns=1):
+        w, h = self.width, self.u_height
+        size = self.get_window_size(count, columns)
+        ratio = size[1] / size[0]
+        if ratio > h / w: return {columns: ratio}
+        ratios = {
+            columns: ratio,
+            **self.get_columns_default(count, columns + 1)
+        }
+        key, value = min(ratios.items(), key=lambda x: abs(x[1] - h / w))
+        return key if columns == 1 else {key: value}
+
+    def get_positions(self, columns, count):
+        rows = ceil(count / columns)
+        size = self.get_window_size(count, columns)
+
+        master_window = WindowPosition([], [self.origin_x, self.origin_y],
+                                       [self.width, self.master_height])
+        positions = [master_window]  # First window position is the master
+
+        for r in reversed(range(rows)):  # Reversed(bottom to top)
+            for c in range(columns):  # Left to right
+                position = [
+                    self.origin_x + (c * size[0]),
+                    self.origin_y + self.master_height + (r * size[1])
+                ]  # The y origin is flipped (0 is bottom, not top
+                location = [c, abs(rows - r - 1)]
+                positions.append(WindowPosition(location, position, size))
+
+        return positions
+
+    def get_window_size(self, count, columns):
+        return [self.width / columns, self.u_height / ceil(count / columns)]
+
     def update_bounds(self, bounds):
         self.origin_x = bounds[0]
         self.origin_y = bounds[1]
@@ -475,19 +509,6 @@ def get_base_command(args, title='{}'):
     return ' '.join(carried)
 
 
-def get_columns_default(screen, count, columns=1):
-    w, h = screen.width, screen.u_height
-    size = get_window_size(screen, count, columns)
-    ratio = size[1] / size[0]
-    if ratio > h / w: return {columns: ratio}
-    ratios = {
-        columns: ratio,
-        **get_columns_default(screen, count, columns + 1)
-    }
-    key, value = min(ratios.items(), key=lambda x: abs(x[1] - h / w))
-    return key if columns == 1 else {key: value}
-
-
 def get_color(*args):
     for color in args:
         m = re.match(r'(\d+),(\d+),(\d+)', color)
@@ -497,26 +518,6 @@ def get_color(*args):
                 int(m.group(1)) / 255,
                 int(m.group(2)) / 255,
                 int(m.group(3)) / 255, 0)
-
-
-def get_positions(screen, columns, count):
-    rows = ceil(count / columns)
-    size = get_window_size(screen, count, columns)
-
-    master_window = WindowPosition([], [screen.origin_x, screen.origin_y],
-                                   [screen.width, screen.master_height])
-    positions = [master_window]  # First window position is the master
-
-    for r in reversed(range(rows)):  # Reversed(bottom to top)
-        for c in range(columns):  # Left to right
-            position = [
-                screen.origin_x + (c * size[0]),
-                screen.origin_y + screen.master_height + (r * size[1])
-            ]  # The y origin is flipped (0 is bottom, not top
-            location = [c, abs(rows - r - 1)]
-            positions.append(WindowPosition(location, position, size))
-
-    return positions
 
 
 def get_screen(screen_number=0, reinit=False):
@@ -572,10 +573,6 @@ def get_window(window_id):
 def get_window_id(tty):
     for window in get_terminal().windows():
         if tty == window.tabs().objectAtIndex_(0).tty(): return window.id()
-
-
-def get_window_size(screen, count, columns):
-    return [screen.width / columns, screen.u_height / ceil(count / columns)]
 
 
 def open_terminal(command):
