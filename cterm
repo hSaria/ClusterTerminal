@@ -29,7 +29,7 @@ class Master:
         self.base_command = base_command
         self.columns = None  # Generate using the aspect ratio
         self.height = min(max(MASTER_HEIGHT_MIN, args.mw_h), MASTER_HEIGHT_MAX)
-        self.menu = Menu(self.send_char)
+        self.menu = Menu(self.send)
         self.pause = args.pause
         # Asumption: Launcher checked screen ID before creating master window
         self.rows = None  # Generate using the aspect ratio
@@ -50,8 +50,9 @@ class Master:
                 Bind(self.add_items, 'a', '[a]dd items'),
                 Bind(self.enable_windows, 'e', '[e]nable'),
                 Bind(self.sort_slaves, 'o', 's[o]rt'),
-                Bind(self.move_screen, 's', 'change [s]creen'),
                 Bind(self.arrange_windows, 'r', '[r]earrage'),
+                Bind(self.move_screen, 's', 'change [s]creen'),
+                Bind(self.send_text, 't', 'send [t]ext'),
                 Bind(self.column_decrease, '<', '[<|>] change column count',
                      True),
                 Bind(self.column_increase, '>', remain=True),
@@ -87,10 +88,10 @@ class Master:
         except ValueError as e:
             pass
 
-    def send_char(self, char):
+    def send(self, string):
         for slave in self.slaves:
             try:
-                slave.send_char(char)
+                slave.send(string)
             except Exception as e:
                 self.remove_slave(slave)
 
@@ -232,6 +233,20 @@ class Master:
                 self.screen = get_screen_bounds(screen)
                 self.arrange_windows()
 
+    def send_text(self):
+        def send_id():
+            for slave in self.slaves:
+                slave.send(str(slave.id))
+
+        def send_item():
+            for slave in self.slaves:
+                slave.send(str(slave.item))
+
+        menu = Menu()
+        menu.binds.append(Bind(send_id, 'i', '[i]d'))
+        menu.binds.append(Bind(send_item, 't', 'i[t]em'))
+        menu.main()
+
     def sort_slaves(self):
         def by_id():
             self.slaves = sorted(self.slaves, key=lambda x: x.id)
@@ -273,8 +288,10 @@ class Slave:
         self.tab.setNormalTextColor_(get_color('255,255,255'))
         self.update_state()
 
-    def send_char(self, char):
-        if self.enabled: self.conn.send(str.encode(char))
+    def send(self, string):
+        if self.enabled:
+            for char in string:
+                self.conn.send(str.encode(char))
 
     def update_state(self, enabled=None, selected=None):
         if enabled != None: self.enabled = enabled
@@ -300,9 +317,9 @@ class Bind:
 class Menu:
     init_tc_attr = None
 
-    def __init__(self, send_char=None):
+    def __init__(self, send=None):
         self.binds = []
-        self.send_char = send_char
+        self.send = send
 
         if Menu.init_tc_attr == None: Menu.init_tc_attr = tc_get()
 
@@ -319,8 +336,8 @@ class Menu:
                 if ord(char) == MENU_CHAR:
                     self.main()
                     cprint(listen_msg)
-                elif self.send_char != None:
-                    self.send_char(char)
+                elif self.send != None:
+                    self.send(char)
         finally:
             tc_set(Menu.init_tc_attr)
 
@@ -335,7 +352,7 @@ class Menu:
 
             if ord(char) == 27: break  # ESC
             if ord(char) == MENU_CHAR:  # Send menu character if hit twice
-                if self.send_char != None: self.send_char(char)
+                if self.send != None: self.send(char)
                 break
 
             for bind in self.binds:
