@@ -26,18 +26,17 @@ TERMINAL = None  # Search for the bundle identifier once and set it here
 
 class Master:
     def __init__(self, args, base_command):
+        # Asumption: Launcher checked screen ID before creating master window
         self.base_command = base_command
         self.columns = None  # Generate using the aspect ratio
         self.height = min(max(MASTER_HEIGHT_MIN, args.mw_h), MASTER_HEIGHT_MAX)
         self.menu = Menu(self.send)
         self.pause = args.pause
-        # Asumption: Launcher checked screen ID before creating master window
-        self.rows = None  # Generate using the aspect ratio
+        self.rows = None  # Match with columns' time of calculation
         self.screen = get_screen_bounds(get_screen(args.screen))
         self.selected = None
-        self.slave_bg_normal = get_color(args.sw_c) or get_color(SLAVE_COLOR)
-        self.slave_bg_disabled = get_color(
-            args.sw_c_d) or get_color(SLAVE_DISABLED_COLOR)
+        self.slave_bg_normal = get_color(args.sw_c, SLAVE_COLOR)
+        self.slave_bg_disabled = get_color(args.sw_c_d, SLAVE_DISABLED_COLOR)
         self.slaves = []
         self.socket = socket_create()
         self.window_id = get_window_id(os.ttyname(sys.stdout.fileno()))
@@ -81,12 +80,14 @@ class Master:
             self.selected = self.slaves[0]
             return True  # Changed
 
-    def remove_slave(self, slave):
+    def remove_slave(self, slaves):
         try:
-            self.slaves.remove(slave)
-            self.update_title()
+            if not isinstance(slaves, list): slaves = [slaves]
+            for slave in slaves:
+                self.slaves.remove(slave)
         except ValueError:
             pass
+        self.update_title()
 
     def send(self, string):
         for slave in self.slaves:
@@ -106,14 +107,10 @@ class Master:
                         continue  # Timed-out; someone is still there!
                     dead_slaves.append(slave)
                 if self.slaves == dead_slaves: os._exit(0)  # Everyone's dead
-
-                for slave in dead_slaves:  # Remove dead slaves
-                    self.remove_slave(slave)
-
+                self.remove_slave(dead_slaves)  # Remove dead slaves
                 sleep(SOCKET_ALIVE_INTERVAL)
 
-        t = threading.Thread(target=check)
-        t.start()
+        threading.Thread(target=check).start()
 
     def update_layout(self, new_column_count):
         self.columns = max(1, min(len(self.slaves), new_column_count))
@@ -130,9 +127,8 @@ class Master:
         self.update_title()
 
     def arrange_windows(self):
-        # Remove slaves that we can't find anymore (closed most likely)
-        for s in [x for x in self.slaves if get_window(x.window_id) is None]:
-            self.remove_slave(s)
+        self.remove_slave(  # Remove slaves with unknown windows; likely closed
+            [x for x in self.slaves if get_window(x.window_id) is None])
 
         positions, self.columns = generate_positions(self.screen, self.columns,
                                                      len(self.slaves),
@@ -164,8 +160,8 @@ class Master:
                 new_y = self.selected.window_position.location[1] + y * i
 
                 # Prevent out of bounds
-                new_x = min(self.columns - 1, new_x)
-                new_y = min(self.rows - 1, new_y)
+                new_x = max(min(self.columns - 1, new_x), 0)
+                new_y = max(min(self.rows - 1, new_y), 0)
 
                 slave = self.find_slave([new_x, new_y])
                 if slave is not None:
@@ -272,10 +268,9 @@ class Slave:
         self.bg_disabled = bg_disabled
         self.bg_normal = bg_normal
         self.enabled = True
-        self.selected = False
-
-        self.sid = Slave.ID
         self.item = item
+        self.selected = False
+        self.sid = Slave.ID
         self.tab = open_terminal(base_command.format(item, command))
         self.window_id = get_window_id(self.tab.tty())
         self.window_position = None
@@ -285,7 +280,7 @@ class Slave:
 
         # The text color is set to white in case it's someting else
         self.tab.setNormalTextColor_(get_color('255,255,255'))
-        self.update_state()
+        self.update_state()  # Update color
 
     def send(self, string):
         if self.enabled:
@@ -346,21 +341,17 @@ class Menu:
         cprint(msg)  # Print msg for menu
 
         while True:
-            remain = True  # By default, remain in the menu until told otherwise
             char = sys.stdin.read(1)
 
             if ord(char) == 27: break  # ESC
             if ord(char) == MENU_CHAR:  # Send menu character if hit twice
                 if self.send is not None: self.send(char)
-                break
+                return
 
             for bind in self.binds:
                 if ord(char.lower()) == bind.key:
-                    remain = bind.remain  # Update remain with bind's remain
-                    bind.action()  # Run action of bind
-                    break
-
-            if not remain: break
+                    bind.action()  # Run action of Bind
+                    if not bind.remain: return  # Bind didn't ask to stay
 
 
 class WindowPosition:
@@ -370,17 +361,13 @@ class WindowPosition:
         self.size = size
 
     def move_window(self, window):
-        # When resized, macOS honors the screen bounds at the current origin and
-        # won't resize past the bounds. The same thing goes when changing the
-        # origin. This means that if the window was resized or moved but
-        # exceeded the bounds, the operation will not have the desired size. To
-        # get around this, we need to resize the window first such that the new
-        # origin won't exceed the bounds, and resize the window again once moved
-        # in case the resize at the old origin exceeded the screen bounds. Using
-        # `setBounds_` honors the window's minimum bounds, which we don't want
-        # here. Additionally, `setBounds_` uses top-left for it's position (not
-        # cartesian coordinates), and converting cartesian coordinates to a
-        # position is not feasible when using more than one screen.
+        # When resized or moved, macOS honors the screen bounds at the current
+        # origin and won't resize past bounds. This means that if the window was
+        # resized or moved but exceeded the bounds, the window will not have the
+        # desired size. To get around this, Resize the window first, relocate
+        # (definitely not out of bounds due to first resize), then resize again
+        # (initial resize might've hit bounds). Can't use `setBounds_` as it
+        # honors the window's minimum bounds.
         window.setVisible_(0)  # Pop tab if in a multi-tab window
         window.setSize_(self.size)
         window.setOrigin_(self.origin)
@@ -480,9 +467,8 @@ def generate_positions(screen, columns, count, master_height):
             position = [screen[0] + (x * s[0]), origin_y + (y * s[1])]
             positions.append(WindowPosition([x, abs(r - y - 1)], position, s))
 
-    # First element is always the master
     positions = [WindowPosition([-1, -1], master_position, master_size)
-                 ] + positions
+                 ] + positions  # First element is the master
 
     return positions, c
 
@@ -495,22 +481,16 @@ def generate_window_params(x, y, count, columns):
 
 
 def get_base_command(args, title='{}'):
-    carried = []
-    carried.append('history -d $(($HISTCMD-1));')  # Remove from history
+    carried = ['history -d $(($HISTCMD-1));']  # Remove from history
     carried.append('clear && printf \'\\e[3J\';')  # Clear screen
     carried.append('printf \'\\e]0;%s\\a\' \'{}\';'.format(title))  # Set title
     if not args.keep: carried.append('if')  # Close on clean exit
     carried.append(BIN_LOCATION)  # cterm location
-    carried.append('--pause')
-    carried.append(str(args.pause))
-    carried.append('--screen')
-    carried.append(str(args.screen))
-    carried.append('--mw-h')
-    carried.append(str(args.mw_h))
-    carried.append('--sw-c')
-    carried.append(str(args.sw_c))
-    carried.append('--sw-c-d')
-    carried.append(str(args.sw_c_d))
+    carried += ['--pause', str(args.pause)]
+    carried += ['--screen', str(args.screen)]
+    carried += ['--mw-h', str(args.mw_h)]
+    carried += ['--sw-c', str(args.sw_c)]
+    carried += ['--sw-c-d', str(args.sw_c_d)]
     if args.keep: carried.append('--keep')
     carried.append(quote(args.command))  # Escape command to run
     carried.append('{}')  # Used for the items
@@ -518,14 +498,15 @@ def get_base_command(args, title='{}'):
     return ' '.join(carried)
 
 
-def get_color(rgb):
-    m = re.match(r'(\d+),(\d+),(\d+)', rgb)
-    if m:
-        from ScriptingBridge import NSColor
-        return NSColor.colorWithDeviceRed_green_blue_alpha_(
-            int(m.group(1)) / 255,
-            int(m.group(2)) / 255,
-            int(m.group(3)) / 255, 0)
+def get_color(*args):
+    for color in args:
+        m = re.match(r'(\d+),(\d+),(\d+)', color)
+        if m:
+            from ScriptingBridge import NSColor
+            return NSColor.colorWithDeviceRed_green_blue_alpha_(
+                int(m.group(1)) / 255,
+                int(m.group(2)) / 255,
+                int(m.group(3)) / 255, 0)
 
 
 def get_screen(screen_number=0, reinit=False):
@@ -595,7 +576,7 @@ def prompt(question, default=''):
     try:
         return input() or default
     except (KeyboardInterrupt, EOFError):
-        return ''
+        return default
     finally:  # Restore previous terminal settings
         tc_set(current_tc_attr)
 
@@ -613,9 +594,7 @@ def socket_connect(location):
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.connect(location)
 
-    t = threading.Thread(target=tap, args=(s, ))
-    t.start()
-
+    threading.Thread(target=tap, args=(s, )).start()
     return s
 
 
@@ -658,7 +637,7 @@ def main():
         title = MASTER_BASE_TITLE + ' '.join(args.item)
 
         t = open_terminal(get_base_command(args, title).format(command))
-        t.setBackgroundColor_(get_color(args.mw_c) or get_color(MASTER_COLOR))
+        t.setBackgroundColor_(get_color(args.mw_c, MASTER_COLOR))
         t.setNormalTextColor_(get_color('255,255,255'))
     elif args.mode == 'master':  # Master window: spawns and controls slaves
         Master(args, get_base_command(args))
