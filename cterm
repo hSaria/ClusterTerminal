@@ -223,7 +223,7 @@ class Master:
             self.slaves = sorted(self.slaves, key=lambda x: x.id)
 
         def by_natural():
-            self.slaves = sorted(self.slaves, key=Slave.sort_natural_key)
+            self.slaves = sorted(self.slaves, key=sort_natural_key)
 
         menu = Menu()
         menu.binds.append(Bind(by_id, 'i', '[i]d'))
