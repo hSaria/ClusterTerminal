@@ -460,22 +460,20 @@ def generate_positions(screen, columns, count, master_height):
     master_size = [screen[2], master_height]
     master_position = [screen[0], screen[1]]
 
-    positions = []
+    # First element is the master
+    positions = [WindowPosition([-1, -1], master_position, master_size)]
 
     for y in reversed(range(r)):  # Rows: reversed(bottom to top)
         for x in range(c):  # Columns: left to right
             position = [screen[0] + (x * s[0]), origin_y + (y * s[1])]
             positions.append(WindowPosition([x, abs(r - y - 1)], position, s))
 
-    positions = [WindowPosition([-1, -1], master_position, master_size)
-                 ] + positions  # First element is the master
-
     return positions, c
 
 
 def generate_window_params(x, y, count, columns):
-    # Use aspect ratio to choose column count if not specified
-    if columns is None: columns = generate_column_default_count(x, y, count)
+    if columns is None:  # Use aspect ratio to choose column count if not specified
+        columns = generate_column_default_count(x, y, count)
     rows = ceil(count / columns)
     return rows, columns, [x / columns, y / rows]  # Size
 
