@@ -18,7 +18,7 @@ You might want to set up an alias for cluster ssh in your `~/.bash_profile`. For
 
 In an alias, you can save your normal settings, like `alias cssh="cterm --screen 2 ssh"` to change the default screen.
 
-If you specify the same argument twice, the last instance is the one used. This is useful since you may want to overwrite part of your alias, but not all of it. For example, the following will use screen 1.
+If you specify the same argument twice, the last instance is the one used. This is useful since you may want to overwrite part of your alias, but not all of it. For example, the following will use screen 1:
 
     cterm ssh host1 host2 --screen 2 --screen 1
 
