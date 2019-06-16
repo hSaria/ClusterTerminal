@@ -8,9 +8,9 @@ A clear and concise description of what the bug is.
 
 **Environment**
 
--   OS: [e.g. macOS 10.14.5]
--   cterm-- version: [e.g. v0.0.1]
+-   OS (`sw_vers -productVersion`): [e.g. macOS 10.14.5]
+-   ClusterTerminal version (`pip3 show cterm`): [e.g. v0.0.1]
 
 **Launch Parameters**
 
-    cterm ssh host1 host2
+e.g. `cterm ssh host1 host2 -p 100`
