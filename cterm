@@ -432,10 +432,10 @@ def args_init():
 
 def base_command(args):
     carried = []
-    carried.append('history -d $(($HISTCMD-1));')
-    carried.append('clear && printf \'\e[3J\'; ')
-    if not args.keep: carried.append('if')
-    carried.append(BIN_LOCATION)
+    carried.append('history -d $(($HISTCMD-1));')  # Remove from history
+    carried.append('clear && printf \'\e[3J\';')  # Clear screen
+    if not args.keep: carried.append('if')  # Close on clean exit
+    carried.append(BIN_LOCATION)  # cterm location
     carried.append('--pause')
     carried.append(str(args.pause))
     carried.append('--screen')
@@ -447,9 +447,9 @@ def base_command(args):
     carried.append('--sw-c-d')
     carried.append(str(args.sw_c_d))
     if args.keep: carried.append('--keep')
-    carried.append(quote(args.command))
+    carried.append(quote(args.command))  # Escape command to run
     carried.append('{}')  # Used for the items
-    if not args.keep: carried.append('; then exit; fi')
+    if not args.keep: carried.append('; then exit; fi')  # Close on clean exit
     return ' '.join(carried)
 
 
