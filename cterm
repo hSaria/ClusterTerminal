@@ -239,7 +239,8 @@ class Slave:
 
     def __init__(self, base_command, bg_normal, bg_disabled, item, socket):
         Slave.ID += 1
-        command = ' --mode slave --socket ' + socket.getsockname()
+        command = quote(
+            item) + ' --mode slave --socket ' + socket.getsockname()
 
         self.bg_disabled = bg_disabled
         self.bg_normal = bg_normal
@@ -248,7 +249,7 @@ class Slave:
 
         self.id = Slave.ID
         self.item = item
-        self.tab = open_terminal(base_command.format(quote(item) + command))
+        self.tab = open_terminal(base_command.format(item, command))
         self.window_id = get_window_id(self.tab.tty())
         self.window_position = None
 
@@ -430,10 +431,11 @@ def args_init():
     return p.parse_args()
 
 
-def base_command(args):
+def base_command(args, title='{}'):
     carried = []
     carried.append('history -d $(($HISTCMD-1));')  # Remove from history
     carried.append('clear && printf \'\e[3J\';')  # Clear screen
+    carried.append('printf \'\\e]0;%s\\a\' \'{}\';'.format(title))  # Set title
     if not args.keep: carried.append('if')  # Close on clean exit
     carried.append(BIN_LOCATION)  # cterm location
     carried.append('--pause')
@@ -622,7 +624,9 @@ elif args.mode == None:  # Spawn master window after some init code
     if not screen.startswith('_'): sys.exit(screen)  # An error message
 
     command = ' '.join([quote(x) for x in args.item]) + ' --mode master'
-    t = open_terminal(base_command(args).format(command))
+    title = 'ClusterTerminal Master – ' + ' '.join(args.item)
+
+    t = open_terminal(base_command(args, title).format(command))
     t.setBackgroundColor_(get_color(args.mw_c) or get_color(MASTER_COLOR))
     t.setNormalTextColor_(get_color('255,255,255'))
 elif args.mode == 'master':  # Master window: spawns and controls slaves
