@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Create a report to help improve cterm--
+about: Create a report to help improve ClusterTerminal
 ---
 
 **Describe the bug**
