@@ -222,16 +222,16 @@ class Master:
     def sort_slaves(self):
         def by_id():
             self.slaves = sorted(self.slaves, key=lambda x: x.id)
+            self.arrange_windows()
 
         def by_natural():
             self.slaves = sorted(self.slaves, key=sort_natural_key)
+            self.arrange_windows()
 
         menu = Menu()
         menu.binds.append(Bind(by_id, 'i', '[i]d'))
         menu.binds.append(Bind(by_natural, 'n', '[n]atural'))
         menu.main()
-
-        self.arrange_windows()
 
 
 class Slave:
