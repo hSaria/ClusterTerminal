@@ -1,5 +1,7 @@
 ClusterTerminal (`cterm`) forwards all keystrokes from a master window to multiple slave windows. Use `cterm` as a method for performing ad hoc tasks, not as a substitute for automation frameworks.
 
+![alt text](.github/ssh-example.gif "Example output")
+
 # Installation
 
     pip3 install cterm
