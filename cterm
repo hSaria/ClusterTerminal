@@ -76,8 +76,8 @@ class Master:
 
     def refresh_selection(self):
         # Confirm current selection exists. If not, pick first slave
-        if self.selected == None or self.find_slave(
-                self.selected.window_position.location) == None:
+        if self.selected is None or self.find_slave(
+                self.selected.window_position.location) is None:
             self.selected = self.slaves[0]
             return True  # Changed
 
@@ -85,14 +85,14 @@ class Master:
         try:
             self.slaves.remove(slave)
             self.update_title()
-        except ValueError as e:
+        except ValueError:
             pass
 
     def send(self, string):
         for slave in self.slaves:
             try:
                 slave.send(string)
-            except Exception as e:
+            except Exception:
                 self.remove_slave(slave)
 
     def socket_connected_check(self):
@@ -124,15 +124,15 @@ class Master:
         os.system('printf \'\\e]0;%s\\a\' \'{}\';'.format(title))
 
     def add_items(self):
-        items = Menu.prompt('Items')
+        items = prompt('Items')
         # shelx.split to get array of arguments
         if items.strip() != '': self.create_slaves(split(items))
         self.update_title()
 
     def arrange_windows(self):
         # Remove slaves that we can't find anymore (closed most likely)
-        for s in [x for x in self.slaves if get_window(x.window_id) == None]:
-            self.remove_slave(slave)
+        for s in [x for x in self.slaves if get_window(x.window_id) is None]:
+            self.remove_slave(s)
 
         positions, self.columns = generate_positions(self.screen, self.columns,
                                                      len(self.slaves),
@@ -168,7 +168,7 @@ class Master:
                 new_y = min(self.rows - 1, new_y)
 
                 slave = self.find_slave([new_x, new_y])
-                if slave != None:
+                if slave is not None:
                     self.selected.update_state(selected=False)
                     self.selected = slave
                     self.selected.update_state(selected=True)
@@ -226,7 +226,7 @@ class Master:
         sys.exit()
 
     def move_screen(self):
-        screen = Menu.prompt(get_screen(reinit=True))
+        screen = prompt(get_screen(reinit=True))
         if screen.isdigit() and int(screen) > 0:
             screen = get_screen(int(screen), reinit=True)
             if screen.startswith('_'):  # Valid response; got coordinates
@@ -236,7 +236,7 @@ class Master:
     def send_text(self):
         def send_id():
             for slave in self.slaves:
-                slave.send(str(slave.id))
+                slave.send(str(slave.sid))
 
         def send_item():
             for slave in self.slaves:
@@ -249,7 +249,7 @@ class Master:
 
     def sort_slaves(self):
         def by_id():
-            self.slaves = sorted(self.slaves, key=lambda x: x.id)
+            self.slaves = sorted(self.slaves, key=lambda x: x.sid)
             self.arrange_windows()
 
         def by_natural():
@@ -265,23 +265,22 @@ class Master:
 class Slave:
     ID = 0  # Per-instance ID; increments during __init__
 
-    def __init__(self, base_command, bg_normal, bg_disabled, item, socket):
+    def __init__(self, base_command, bg_normal, bg_disabled, item, sock):
         Slave.ID += 1
-        command = quote(
-            item) + ' --mode slave --socket ' + socket.getsockname()
+        command = quote(item) + ' --mode slave --socket ' + sock.getsockname()
 
         self.bg_disabled = bg_disabled
         self.bg_normal = bg_normal
         self.enabled = True
         self.selected = False
 
-        self.id = Slave.ID
+        self.sid = Slave.ID
         self.item = item
         self.tab = open_terminal(base_command.format(item, command))
         self.window_id = get_window_id(self.tab.tty())
         self.window_position = None
 
-        self.conn, _ = socket.accept()
+        self.conn, _ = sock.accept()
         self.conn.settimeout(SOCKET_TIMEOUT)  # For checking if socket is alive
 
         # The text color is set to white in case it's someting else
@@ -294,8 +293,8 @@ class Slave:
                 self.conn.send(str.encode(char))
 
     def update_state(self, enabled=None, selected=None):
-        if enabled != None: self.enabled = enabled
-        if selected != None: self.selected = selected
+        if enabled is not None: self.enabled = enabled
+        if selected is not None: self.selected = selected
 
         blue_shift = SLAVE_SELECTED_BLUE_SHIFT if self.selected else 0
         color = self.bg_normal if self.enabled else self.bg_disabled
@@ -307,10 +306,10 @@ class Slave:
 
 
 class Bind:
-    def __init__(self, action, key, help=None, remain=False):
+    def __init__(self, action, key, msg=None, remain=False):
         self.action = action
         self.key = ord(key.lower())
-        self.help = help
+        self.msg = msg
         self.remain = remain
 
 
@@ -321,7 +320,7 @@ class Menu:
         self.binds = []
         self.send = send
 
-        if Menu.init_tc_attr == None: Menu.init_tc_attr = tc_get()
+        if Menu.init_tc_attr is None: Menu.init_tc_attr = tc_get()
 
     def listen(self):
         listen_msg = '[CTRL+{}] enter menu'.format(chr(MENU_CHAR + 64))
@@ -336,15 +335,15 @@ class Menu:
                 if ord(char) == MENU_CHAR:
                     self.main()
                     cprint(listen_msg)
-                elif self.send != None:
+                elif self.send is not None:
                     self.send(char)
         finally:
             tc_set(Menu.init_tc_attr)
 
     def main(self):
-        help = ', '.join(['[ESC] cancel'] +
-                         [x.help for x in self.binds if x.help != None])
-        cprint(help)  # Print help for menu
+        msg = ', '.join(['[ESC] cancel'] +
+                        [x.msg for x in self.binds if x.msg is not None])
+        cprint(msg)  # Print msg for menu
 
         while True:
             remain = True  # By default, remain in the menu until told otherwise
@@ -352,7 +351,7 @@ class Menu:
 
             if ord(char) == 27: break  # ESC
             if ord(char) == MENU_CHAR:  # Send menu character if hit twice
-                if self.send != None: self.send(char)
+                if self.send is not None: self.send(char)
                 break
 
             for bind in self.binds:
@@ -362,18 +361,6 @@ class Menu:
                     break
 
             if not remain: break
-
-    def prompt(question, default=''):
-        current_tc_attr = tc_get()  # Save current
-        if Menu.init_tc_attr: tc_set(Menu.init_tc_attr)  # Restore initial
-        cprint(str(question) + ': ')
-
-        try:
-            return input() or default
-        except (KeyboardInterrupt, EOFError):
-            return ''
-        finally:  # Restore previous terminal settings
-            tc_set(current_tc_attr)
 
 
 class WindowPosition:
@@ -461,33 +448,9 @@ def args_init():
     return p.parse_args()
 
 
-def base_command(args, title='{}'):
-    carried = []
-    carried.append('history -d $(($HISTCMD-1));')  # Remove from history
-    carried.append('clear && printf \'\e[3J\';')  # Clear screen
-    carried.append('printf \'\\e]0;%s\\a\' \'{}\';'.format(title))  # Set title
-    if not args.keep: carried.append('if')  # Close on clean exit
-    carried.append(BIN_LOCATION)  # cterm location
-    carried.append('--pause')
-    carried.append(str(args.pause))
-    carried.append('--screen')
-    carried.append(str(args.screen))
-    carried.append('--mw-h')
-    carried.append(str(args.mw_h))
-    carried.append('--sw-c')
-    carried.append(str(args.sw_c))
-    carried.append('--sw-c-d')
-    carried.append(str(args.sw_c_d))
-    if args.keep: carried.append('--keep')
-    carried.append(quote(args.command))  # Escape command to run
-    carried.append('{}')  # Used for the items
-    if not args.keep: carried.append('; then exit; fi')  # Close on clean exit
-    return ' '.join(carried)
-
-
 def cprint(string=None):  # Do not over-use; it runs a command to clear screen
-    os.system('clear && printf \'\e[3J\'')
-    if string != None: print(string, end='', flush=True)
+    os.system('clear && printf \'\\e[3J\'')
+    if string is not None: print(string, end='', flush=True)
 
 
 def generate_column_default_count(x, y, count, column=1, c_s=None):
@@ -526,13 +489,37 @@ def generate_positions(screen, columns, count, master_height):
 
 def generate_window_params(x, y, count, columns):
     # Use aspect ratio to choose column count if not specified
-    if columns == None: columns = generate_column_default_count(x, y, count)
+    if columns is None: columns = generate_column_default_count(x, y, count)
     rows = ceil(count / columns)
     return rows, columns, [x / columns, y / rows]  # Size
 
 
+def get_base_command(args, title='{}'):
+    carried = []
+    carried.append('history -d $(($HISTCMD-1));')  # Remove from history
+    carried.append('clear && printf \'\\e[3J\';')  # Clear screen
+    carried.append('printf \'\\e]0;%s\\a\' \'{}\';'.format(title))  # Set title
+    if not args.keep: carried.append('if')  # Close on clean exit
+    carried.append(BIN_LOCATION)  # cterm location
+    carried.append('--pause')
+    carried.append(str(args.pause))
+    carried.append('--screen')
+    carried.append(str(args.screen))
+    carried.append('--mw-h')
+    carried.append(str(args.mw_h))
+    carried.append('--sw-c')
+    carried.append(str(args.sw_c))
+    carried.append('--sw-c-d')
+    carried.append(str(args.sw_c_d))
+    if args.keep: carried.append('--keep')
+    carried.append(quote(args.command))  # Escape command to run
+    carried.append('{}')  # Used for the items
+    if not args.keep: carried.append('; then exit; fi')  # Close on clean exit
+    return ' '.join(carried)
+
+
 def get_color(rgb):
-    m = re.match('(\d+),(\d+),(\d+)', rgb)
+    m = re.match(r'(\d+),(\d+),(\d+)', rgb)
     if m:
         from ScriptingBridge import NSColor
         return NSColor.colorWithDeviceRed_green_blue_alpha_(
@@ -579,15 +566,15 @@ def get_screen_bounds(s):
 def get_terminal():
     from ScriptingBridge import SBApplication
     global TERMINAL
-    if TERMINAL == None:
+    if TERMINAL is None:
         bundle = 'com.apple.Terminal'
         TERMINAL = SBApplication.applicationWithBundleIdentifier_(bundle)
-        if TERMINAL == None: sys.exit('Did not find {}'.format(bundle))
+        if TERMINAL is None: sys.exit('Did not find {}'.format(bundle))
     return TERMINAL
 
 
-def get_window(id):
-    res = get_terminal().windows().objectWithID_(id)
+def get_window(window_id):
+    res = get_terminal().windows().objectWithID_(window_id)
     return res if res.get() else None
 
 
@@ -600,6 +587,19 @@ def open_terminal(command):
     return get_terminal().doScript_in_(command, 0)
 
 
+def prompt(question, default=''):
+    current_tc_attr = tc_get()  # Save current
+    if Menu.init_tc_attr: tc_set(Menu.init_tc_attr)  # Restore initial
+    cprint(str(question) + ': ')
+
+    try:
+        return input() or default
+    except (KeyboardInterrupt, EOFError):
+        return ''
+    finally:  # Restore previous terminal settings
+        tc_set(current_tc_attr)
+
+
 def socket_connect(location):
     def tap(s):
         import fcntl
@@ -607,7 +607,7 @@ def socket_connect(location):
             while True:
                 for c in s.recv(1024).decode():
                     fcntl.ioctl(sys.stdin, termios.TIOCSTI, c)
-        except Exception as e:
+        except Exception:
             pass
 
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -628,7 +628,7 @@ def socket_create():
     return s
 
 
-def sort_natural_key(s, _r=re.compile('(\d+)')):
+def sort_natural_key(s, _r=re.compile(r'(\d+)')):
     return [int(t) if t.isdigit() else t.lower() for t in _r.split(s.item)]
 
 
@@ -645,23 +645,27 @@ def tc_set(settings):
     termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, settings)
 
 
-args = args_init()
+def main():
+    args = args_init()
 
-if args.reinit:  # Someone requested screen info
-    print(get_screen(args.screen))
-elif args.mode == None:  # Spawn master window after some init code
-    screen = get_screen(args.screen)
-    if not screen.startswith('_'): sys.exit(screen)  # An error message
+    if args.reinit:  # Someone requested screen info
+        print(get_screen(args.screen))
+    elif args.mode is None:  # Spawn master window after some init code
+        screen = get_screen(args.screen)
+        if not screen.startswith('_'): sys.exit(screen)  # An error message
 
-    command = ' '.join([quote(x) for x in args.item]) + ' --mode master'
-    title = MASTER_BASE_TITLE + ' '.join(args.item)
+        command = ' '.join([quote(x) for x in args.item]) + ' --mode master'
+        title = MASTER_BASE_TITLE + ' '.join(args.item)
 
-    t = open_terminal(base_command(args, title).format(command))
-    t.setBackgroundColor_(get_color(args.mw_c) or get_color(MASTER_COLOR))
-    t.setNormalTextColor_(get_color('255,255,255'))
-elif args.mode == 'master':  # Master window: spawns and controls slaves
-    master = Master(args, base_command(args))
-elif args.mode == 'slave':  # Slave window: runs command and reads input
-    s = socket_connect(args.socket)  # Connect to socket and mirror keystrokes
-    os.system(args.command + ' ' + args.item[0])
-    s.close()  # Close socket
+        t = open_terminal(get_base_command(args, title).format(command))
+        t.setBackgroundColor_(get_color(args.mw_c) or get_color(MASTER_COLOR))
+        t.setNormalTextColor_(get_color('255,255,255'))
+    elif args.mode == 'master':  # Master window: spawns and controls slaves
+        Master(args, get_base_command(args))
+    elif args.mode == 'slave':  # Slave window: runs command and reads input
+        s = socket_connect(args.socket)  # Start mirror keystrokes
+        os.system(args.command + ' ' + args.item[0])
+        s.close()  # Close socket
+
+
+if __name__ == '__main__': main()
