@@ -10,6 +10,7 @@ from math import ceil
 from shlex import quote, split
 from time import sleep
 
+BIN_LOCATION = quote(os.path.abspath(sys.argv[0]))
 MASTER_COLOR = '84,30,22'
 MASTER_HEIGHT_MAX = 200
 MASTER_HEIGHT_MIN = 45
@@ -434,7 +435,7 @@ def base_command(args):
     carried.append('history -d $(($HISTCMD-1));')
     carried.append('clear && printf \'\e[3J\'; ')
     if not args.keep: carried.append('if')
-    carried.append(sys.argv[0])
+    carried.append(BIN_LOCATION)
     carried.append('--pause')
     carried.append(str(args.pause))
     carried.append('--screen')
@@ -511,7 +512,7 @@ def get_color(rgb):
 def get_screen(screen_number=0, reinit=False):
     if reinit:  # Get uncached screen info using a new Window Server connection
         import subprocess
-        command = sys.argv[0] + ' 0 0 --reinit --screen ' + str(screen_number)
+        command = BIN_LOCATION + ' 0 0 --reinit --screen ' + str(screen_number)
         result = subprocess.run(command, stdout=subprocess.PIPE, shell=True)
         return result.stdout.decode().strip()
 
