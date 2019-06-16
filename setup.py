@@ -26,5 +26,5 @@ setup(
     python_requires=REQUIRES_PYTHON,
     scripts=['cterm'],
     url='https://github.com/hSaria/ClusterTerminal',
-    version='0.0.2',
+    version='0.0.3',
 )
