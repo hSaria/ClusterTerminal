@@ -654,7 +654,7 @@ def main():
         Master(args, get_base_command(args))
     elif args.mode == 'slave':  # Slave window: runs command and reads input
         s = socket_connect(args.socket)  # Start mirror keystrokes
-        os.system(args.command + ' ' + args.item[0])
+        os.system(quote(args.command) + ' ' + quote(args.item[0]))
         s.close()  # Close socket
 
 
