@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+"""ClusterTerminal (`cterm`) forwards all keystrokes from a master window to
+multiple slave windows. Use `cterm` as a method for performing ad hoc tasks,
+not as a substitute for automation frameworks.
+
+Todo:
+    * Simplify the Master class; some of its functionality should be moved out,
+        possibly to the Screen class.
+"""
 
 import os
 import re
@@ -25,12 +33,13 @@ TERMINAL = None  # Search for the bundle identifier once and set it here
 
 
 class Master:
+    """The brain of the operation where the orchestration happens."""
+
     def __init__(self, args, base_command):
         # Asumption: Launcher checked screen ID before creating master window
         height = min(max(MASTER_HEIGHT_MIN, args.mw_h), MASTER_HEIGHT_MAX)
         self.base_command = base_command
         self.columns = None  # Generate using the aspect ratio
-        self.menu = Menu(self.send)
         self.pause = args.pause
         self.rows = None  # Match with columns' time of calculation
         self.screen = Screen(height, args.screen)
@@ -44,45 +53,52 @@ class Master:
         self.create_slaves(args.item)
         self.socket_connected_check()  # Start the socket check
 
-        # Add binds to menu
-        for bind in [
-                Bind(self.add_items, 'a', '[a]dd items'),
-                Bind(self.enable_windows, 'e', '[e]nable'),
-                Bind(self.sort_slaves, 'o', 's[o]rt'),
-                Bind(self.arrange_windows, 'r', '[r]earrage'),
-                Bind(self.change_screen, 's', 'change [s]creen'),
-                Bind(self.send_text, 't', 'send [t]ext'),
-                Bind(self.column_decrease, '<', '[<|>] change column count',
-                     True),
-                Bind(self.column_increase, '>', remain=True),
-                Bind(self.exit, 'x', 'e[x]it'),
-        ]:
-            self.menu.binds.append(bind)
-        self.menu.listen()
+        menu = Menu(self.send)
+        menu.add_bind(self.add_items, 'a', '[a]dd items')
+        menu.add_bind(self.enable_windows, 'e', '[e]nable')
+        menu.add_bind(self.sort_slaves, 'o', 's[o]rt')
+        menu.add_bind(self.arrange_windows, 'r', '[r]earrage')
+        menu.add_bind(self.change_screen, 's', 'change [s]creen')
+        menu.add_bind(self.send_text, 't', 'send [t]ext')
+        menu.add_bind(self.column_decrease, '<', '[<|>] change column count',
+                      True)
+        menu.add_bind(self.column_increase, '>', remain=True)
+        menu.add_bind(self.exit, 'x', 'e[x]it')
+        menu.add_bind(self.send_text, 't', 'send [t]ext')
+        menu.listen()
 
     def create_slaves(self, items):
+        """Create slaves and arrange windows afterwards."""
         for item in items:
             self.slaves.append(
                 Slave(self.base_command, self.slave_bg_normal,
                       self.slave_bg_disabled, item, self.socket))
-            # Inter-window pause, but don't pause after last window
-            if items[-1] != item: sleep(self.pause / 1000)
+
+            if items[-1] != item:  # Inter-window pause, but not on last window
+                sleep(self.pause / 1000)
         self.arrange_windows()
 
     def find_slave(self, location):
+        """Find a slave according to its location on the window grid."""
         for slave in self.slaves:
-            if slave.window_position.location == location: return slave
+            if slave.window_position.location == location:
+                return slave
+        return None
 
     def refresh_selection(self):
-        # Confirm current selection exists. If not, pick first slave
+        """Confirm that the currently selected slave window exists. Otherwise,
+        pick first slave. Return whether the current selection changed."""
         if self.selected is None or self.find_slave(
                 self.selected.window_position.location) is None:
             self.selected = self.slaves[0]
-            return True  # Changed
+            return True
+        return False
 
     def remove_slave(self, slaves):
+        """Remove slave (or list of slaves) from master"""
         try:
-            if not isinstance(slaves, list): slaves = [slaves]
+            if not isinstance(slaves, list):
+                slaves = [slaves]
             for slave in slaves:
                 self.slaves.remove(slave)
         except ValueError:
@@ -90,6 +106,7 @@ class Master:
         self.update_title()
 
     def send(self, string):
+        """Send a string to all slaves (disabled ones will ignore it)."""
         for slave in self.slaves:
             try:
                 slave.send(string)
@@ -97,6 +114,9 @@ class Master:
                 self.remove_slave(slave)
 
     def socket_connected_check(self):
+        """Check whether all connections to the socket as still active. Remove
+        the slaves with a dead connection."""
+
         def check():
             while True:
                 dead_slaves = []
@@ -106,33 +126,42 @@ class Master:
                     except socket.timeout:
                         continue  # Timed-out; someone is still there!
                     dead_slaves.append(slave)
-                if self.slaves == dead_slaves: os._exit(0)  # Everyone's dead
+
+                if self.slaves == dead_slaves:  # Everyone's dead
+                    os._exit(0)
+
                 self.remove_slave(dead_slaves)  # Remove dead slaves
                 sleep(SOCKET_ALIVE_INTERVAL)
 
         threading.Thread(target=check).start()
 
     def update_layout(self, new_column_count):
+        """Update the column count, and subsequently the row count."""
         self.columns = max(1, min(len(self.slaves), new_column_count))
         self.rows = ceil(len(self.slaves) / self.columns)
 
     def update_title(self):
+        """Update the title according the current list of slaves."""
         title = MASTER_BASE_TITLE + ' '.join([x.item for x in self.slaves])
         os.system('printf \'\\e]0;%s\\a\' \'{}\';'.format(title))
 
     def add_items(self):
+        """Add additional items (slaves)."""
         items = prompt('Items')
-        # shelx.split to get array of arguments
-        if items.strip() != '': self.create_slaves(split(items))
+
+        if items.strip() != '':
+            self.create_slaves(split(items))  # shelx.split to get list of args
         self.update_title()
 
     def arrange_windows(self):
+        """Arrange the windows on the grid according the current column count.
+        Remove any slaves without active windows IDs."""
         self.remove_slave(  # Remove slaves with unknown windows; likely closed
             [x for x in self.slaves if get_window(x.window_id) is None])
 
         if self.columns is None:
             self.columns = self.screen.get_columns_default(len(self.slaves))
-        positions = self.screen.get_positions(self.columns, len(self.slaves))
+        positions = self.screen.get_positions(len(self.slaves), self.columns)
         self.update_layout(self.columns)
 
         for slave, position in zip(self.slaves, positions[1:]):
@@ -142,22 +171,31 @@ class Master:
         self.refresh_selection()
 
     def change_screen(self):
-        if self.screen.change_screen():  # Screen changed
+        """Call upon the Screen instance to change the screen used. If changed,
+        rearrange the windows."""
+        if self.screen.change_screen():
             self.arrange_windows()
 
     def column_decrease(self):
+        """Decrease the column count of the grid of windows."""
         current = self.columns
         self.update_layout(self.columns - 1)
-        if current != self.columns: self.arrange_windows()
+        if current != self.columns:  # Layout changed
+            self.arrange_windows()
 
     def column_increase(self):
+        """Increase the column count of the grid of windows."""
         current = self.columns
         self.update_layout(self.columns + 1)
-        if current != self.columns: self.arrange_windows()
+        if current != self.columns:  # Layout changed
+            self.arrange_windows()
 
     def enable_windows(self):
+        """Menu for managing which windows are enabled."""
+
         def update_selection(x, y):
-            if self.refresh_selection(): return  # Selection changed; leave
+            if self.refresh_selection():
+                return  # Selection changed; leave
 
             for i in range(1, max(self.rows, self.columns) + 1):
                 new_x = self.selected.window_position.location[0] + x * i
@@ -205,27 +243,27 @@ class Master:
             update_selection(1, 0)
 
         menu = Menu()
-        for bind in [
-                Bind(move_up, 'w', '[WASD] move selection', True),
-                Bind(move_down, 's', remain=True),
-                Bind(move_left, 'a', remain=True),
-                Bind(move_right, 'd', remain=True),
-                Bind(toggle_selected, ' ', '[space] toggle selection', True),
-                Bind(disable_odd, 'o', 'disable every [o]ther', True),
-                Bind(enable_all, 'n', 'e[n]able all', True),
-                Bind(toggle_all, 't', '[t]oggle enabled', True),
-        ]:
-            menu.binds.append(bind)
+        menu.add_bind(move_up, 'w', '[WASD] move selection', True)
+        menu.add_bind(move_down, 's', remain=True)
+        menu.add_bind(move_left, 'a', remain=True)
+        menu.add_bind(move_right, 'd', remain=True)
+        menu.add_bind(toggle_selected, ' ', '[space] toggle selection', True)
+        menu.add_bind(disable_odd, 'o', 'disable every [o]ther', True)
+        menu.add_bind(enable_all, 'n', 'e[n]able all', True)
+        menu.add_bind(toggle_all, 't', '[t]oggle enabled', True)
         menu.main()
 
         self.selected.update_state(selected=False)  # Unhighlight selected
 
     def exit(self):
+        """Exit the program."""
         self.slaves = []  # Empty array to signal end for socket check thread
         cprint()
         sys.exit()
 
     def send_text(self):
+        """Send relative text to each slave."""
+
         def send_id():
             for slave in self.slaves:
                 slave.send(str(slave.sid))
@@ -235,11 +273,13 @@ class Master:
                 slave.send(str(slave.item))
 
         menu = Menu()
-        menu.binds.append(Bind(send_id, 'i', '[i]d'))
-        menu.binds.append(Bind(send_item, 't', 'i[t]em'))
+        menu.add_bind(send_id, 'i', '[i]d')
+        menu.add_bind(send_item, 't', 'i[t]em')
         menu.main()
 
     def sort_slaves(self):
+        """Sort the slave windows."""
+
         def by_id():
             self.slaves = sorted(self.slaves, key=lambda x: x.sid)
             self.arrange_windows()
@@ -249,12 +289,13 @@ class Master:
             self.arrange_windows()
 
         menu = Menu()
-        menu.binds.append(Bind(by_id, 'i', '[i]d'))
-        menu.binds.append(Bind(by_natural, 'n', '[n]atural'))
+        menu.add_bind(by_id, 'i', '[i]d')
+        menu.add_bind(by_natural, 'n', '[n]atural')
         menu.main()
 
 
 class Slave:
+    """Spawns a Slave window for the master to command."""
     ID = 0  # Per-instance ID; increments during __init__
 
     def __init__(self, base_command, bg_normal, bg_disabled, item, sock):
@@ -279,13 +320,17 @@ class Slave:
         self.update_state()  # Update color
 
     def send(self, string):
+        """Send `string` to the slave's window."""
         if self.enabled:
             for char in string:
                 self.conn.send(str.encode(char))
 
     def update_state(self, enabled=None, selected=None):
-        if enabled is not None: self.enabled = enabled
-        if selected is not None: self.selected = selected
+        """update the state of the slave and, accordingly, its window color."""
+        if enabled is not None:
+            self.enabled = enabled
+        if selected is not None:
+            self.selected = selected
 
         blue_shift = SLAVE_SELECTED_BLUE_SHIFT if self.selected else 0
         color = self.bg_normal if self.enabled else self.bg_disabled
@@ -296,24 +341,31 @@ class Slave:
         self.tab.setBackgroundColor_(color)
 
 
-class Bind:
-    def __init__(self, action, key, msg=None, remain=False):
-        self.action = action
-        self.key = ord(key.lower())
-        self.msg = msg
-        self.remain = remain
-
-
 class Menu:
-    init_tc_attr = None
+    """A menuing system that uses a list of "binds" for navigation."""
+    init_tc_attr = None  # The initial attributes of the terminal
 
     def __init__(self, send=None):
         self.binds = []
         self.send = send
 
-        if Menu.init_tc_attr is None: Menu.init_tc_attr = tc_get()
+        if Menu.init_tc_attr is None:
+            Menu.init_tc_attr = tc_get()
+
+    def add_bind(self, action, key, msg=None, remain=False):
+        """Add a bind to the menu which calls `action` when `key` is hit and
+        returns after being hit if `remain`. `msg`, if not None, is used in the
+        menu's text."""
+        self.binds.append({
+            'action': action,
+            'key': ord(key.lower()),
+            'msg': msg,
+            'remain': remain
+        })
 
     def listen(self):
+        """Indefinitely listen to key strokes. If the menu character is hit,
+        enter the menu. Otherwise, the character is supplied to `self.send`."""
         listen_msg = '[CTRL+{}] enter menu'.format(chr(MENU_CHAR + 64))
 
         try:
@@ -332,42 +384,54 @@ class Menu:
             tc_set(Menu.init_tc_attr)
 
     def main(self):
+        """Enters the menu. Exits with ESC."""
         msg = ', '.join(['[ESC] cancel'] +
-                        [x.msg for x in self.binds if x.msg is not None])
-        cprint(msg)  # Print msg for menu
+                        [x['msg'] for x in self.binds if x['msg'] is not None])
+        cprint(msg)
 
         while True:
             char = sys.stdin.read(1)
 
-            if ord(char) == 27: break  # ESC
+            if ord(char) == 27:  # ESC
+                return
             if ord(char) == MENU_CHAR:  # Send menu character if hit twice
-                if self.send is not None: self.send(char)
+                if self.send is not None:
+                    self.send(char)
                 return
 
             for bind in self.binds:
-                if ord(char.lower()) == bind.key:
-                    bind.action()  # Run action of Bind
-                    if not bind.remain: return  # Bind didn't ask to stay
+                if ord(char.lower()) == bind['key']:
+                    bind['action']()  # Run action of Bind
+                    if not bind['remain']:  # Bind didn't ask to stay
+                        return
 
 
 class Screen:
+    """Represent a screen and its bounds"""
+
     def __init__(self, master_height, screen_id):
         self.master_height = master_height
         self.update_bounds(get_screen_bounds(get_screen(screen_id)))
 
     def change_screen(self):
+        """Change the current screen, taking into account the new bounds. If
+        screen changed, return True. Otherwise, return False."""
         screen = prompt(get_screen(reinit=True))
         if screen.isdigit() and int(screen) > 0:
             screen = get_screen(int(screen), reinit=True)
             if screen.startswith('_'):  # Valid response; got coordinates
                 self.update_bounds(get_screen_bounds(screen))
                 return True  # Changed successfully
+        return False
 
     def get_columns_default(self, count, columns=1):
+        """Get a column count that would generate windows that closely reflect
+        the aspect ratio of the screen. Leave `columns as 1`."""
         w, h = self.width, self.u_height
         size = self.get_window_size(count, columns)
         ratio = size[1] / size[0]
-        if ratio > h / w: return {columns: ratio}
+        if ratio > h / w:
+            return {columns: ratio}
         ratios = {
             columns: ratio,
             **self.get_columns_default(count, columns + 1)
@@ -375,7 +439,9 @@ class Screen:
         key, value = min(ratios.items(), key=lambda x: abs(x[1] - h / w))
         return key if columns == 1 else {key: value}
 
-    def get_positions(self, columns, count):
+    def get_positions(self, count, columns):
+        """Generate a list of WindowPositions according to the window count and
+        number of requested columns."""
         rows = ceil(count / columns)
         size = self.get_window_size(count, columns)
 
@@ -395,9 +461,12 @@ class Screen:
         return positions
 
     def get_window_size(self, count, columns):
+        """Return the size ([width, height]) for a window based on the number
+        of windows (count) and the column count (columns)."""
         return [self.width / columns, self.u_height / ceil(count / columns)]
 
     def update_bounds(self, bounds):
+        """Use the output of `get_screen_bounds` to update screen bounds."""
         self.origin_x = bounds[0]
         self.origin_y = bounds[1]
         self.width = bounds[2]
@@ -406,19 +475,24 @@ class Screen:
 
 
 class WindowPosition:
+    """Represents the location on the grid of windows, origin relative to the
+    screen, and window size."""
+
     def __init__(self, location, origin, size):
         self.location = location
         self.origin = origin
         self.size = size
 
     def move_window(self, window):
-        # When resized or moved, macOS honors the screen bounds at the current
-        # origin and won't resize past bounds. This means that if the window was
-        # resized or moved but exceeded the bounds, the window will not have the
-        # desired size. To get around this, Resize the window first, relocate
-        # (definitely not out of bounds due to first resize), then resize again
-        # (initial resize might've hit bounds). Can't use `setBounds_` as it
-        # honors the window's minimum bounds.
+        """Move a Terminal `window` to the bounds defined by current instance.
+
+        When resized or moved, macOS honors the screen bounds at the current
+        origin and won't resize past bounds. This means that if the window was
+        resized or moved but exceeded the bounds, the window will not have the
+        desired size. To get around this, Resize the window first, relocate
+        (definitely not out of bounds due to first resize), then resize again
+        (initial resize might've hit bounds). Can't use `setBounds_` as it
+        honors the window's minimum bounds."""
         window.setVisible_(0)  # Pop tab if in a multi-tab window
         window.setSize_(self.size)
         window.setOrigin_(self.origin)
@@ -427,6 +501,7 @@ class WindowPosition:
 
 
 def args_init():
+    """Initialzes arguments and returns the output of `parse_args`"""
     import argparse
 
     p = argparse.ArgumentParser(
@@ -486,30 +561,44 @@ def args_init():
     return p.parse_args()
 
 
-def cprint(string=None):  # Do not over-use; it runs a command to clear screen
+def cprint(string=None):
+    """Clear screen and print `string` if supplied."""
     os.system('clear && printf \'\\e[3J\'')
-    if string is not None: print(string, end='', flush=True)
+    if string is not None:
+        print(string, end='', flush=True)
 
 
 def get_base_command(args, title='{}'):
+    """Returns a string containing the command to be used as a format string.
+
+    Parameters:
+        args (argparse.Namespace): The arguments returns from `args_init`.
+        title (str): The terminal title to set. Defaults to `{}` to be used in
+            the format string.
+    """
     carried = ['history -d $(($HISTCMD-1));']  # Remove from history
     carried.append('clear && printf \'\\e[3J\';')  # Clear screen
     carried.append('printf \'\\e]0;%s\\a\' \'{}\';'.format(title))  # Set title
-    if not args.keep: carried.append('if')  # Close on clean exit
+    if not args.keep:  # Close on clean exit
+        carried.append('if')
     carried.append(BIN_LOCATION)  # cterm location
     carried += ['--pause', str(args.pause)]
     carried += ['--screen', str(args.screen)]
     carried += ['--mw-h', str(args.mw_h)]
     carried += ['--sw-c', str(args.sw_c)]
     carried += ['--sw-c-d', str(args.sw_c_d)]
-    if args.keep: carried.append('--keep')
+    if args.keep:
+        carried.append('--keep')
     carried.append(quote(args.command))  # Escape command to run
     carried.append('{}')  # Used for the items
-    if not args.keep: carried.append('; then exit; fi')  # Close on clean exit
+    if not args.keep:  # Close on clean exit
+        carried.append('; then exit; fi')
     return ' '.join(carried)
 
 
 def get_color(*args):
+    """Returns an instance of NSColor. The input is one or more strings in the
+    format of `r,g,b`, with each color as an 8-bit color (0 to 255)."""
     for color in args:
         m = re.match(r'(\d+),(\d+),(\d+)', color)
         if m:
@@ -518,9 +607,20 @@ def get_color(*args):
                 int(m.group(1)) / 255,
                 int(m.group(2)) / 255,
                 int(m.group(3)) / 255, 0)
+    return None
 
 
 def get_screen(screen_number=0, reinit=False):
+    """Return the details of a screen as a string. If the string starts with _
+    then the screen was found and should be parsed with `get_screen_bounds`.
+    Otherwise, the error message is returned.
+
+    Parameters:
+        screen_number (int): screen number to get the details of. If 0, the
+            available list is returned.
+        reinit (bool): If True, a new process is spawned to get the details.
+            This is necessary as a process caches the screen info.
+    """
     if reinit:  # Get uncached screen info using a new Window Server connection
         import subprocess
         command = BIN_LOCATION + ' 0 0 --reinit --screen ' + str(screen_number)
@@ -532,8 +632,7 @@ def get_screen(screen_number=0, reinit=False):
     # Hide the Python launcher icon
     NSBundle.mainBundle().infoDictionary()['LSBackgroundOnly'] = '1'
 
-    # Connect to the Window Server and run initializing code. Without this, the
-    # menu bar of non-main screens is not ignored in visibleFrame()
+    # Connect to the Window Server and run initializing code.
     NSApplication.sharedApplication()
 
     screens = NSScreen.screens()
@@ -541,9 +640,10 @@ def get_screen(screen_number=0, reinit=False):
     available = 'Available screens: ' + ', '.join(
         [str(x) for x in range(1, count + 1)])
 
-    # Asking for list of screens or out of bounds
-    if screen_number == 0: return available  # Asking for list of screen ID's
-    if screen_number > count: return 'Screen does not exist. ' + available
+    if screen_number == 0:  # Asking for list of screen ID's
+        return available
+    if screen_number > count:  # Out of bounds
+        return 'Screen does not exist. ' + available
 
     f = screens.objectAtIndex_(screen_number - 1).visibleFrame()
     return '_' + ','.join([
@@ -551,37 +651,48 @@ def get_screen(screen_number=0, reinit=False):
     ])
 
 
-def get_screen_bounds(s):
-    return [float(x) for x in s[1:].split(',')]  # Get rid of the leading _
+def get_screen_bounds(details):
+    """Parses the valid output (starts with _) of get_screen and returns the
+    origin points and dimentions in a list."""
+    return [float(x) for x in details[1:].split(',')]
 
 
 def get_terminal():
+    """Returns the SBApplication for the Terminal bundle"""
     from ScriptingBridge import SBApplication
     global TERMINAL
     if TERMINAL is None:
         bundle = 'com.apple.Terminal'
         TERMINAL = SBApplication.applicationWithBundleIdentifier_(bundle)
-        if TERMINAL is None: sys.exit('Did not find {}'.format(bundle))
+        if TERMINAL is None:
+            sys.exit('Did not find {}'.format(bundle))
     return TERMINAL
 
 
 def get_window(window_id):
-    res = get_terminal().windows().objectWithID_(window_id)
-    return res if res.get() else None
+    """Return the window object with `window_id` or None if not found."""
+    return get_terminal().windows().objectWithID_(window_id)
 
 
 def get_window_id(tty):
+    """Return a terminal's window ID by searching using its tty name. Return
+    None if not found."""
     for window in get_terminal().windows():
-        if tty == window.tabs().objectAtIndex_(0).tty(): return window.id()
+        if tty == window.tabs().objectAtIndex_(0).tty():
+            return window.id()
+    return None
 
 
 def open_terminal(command):
+    """Open and return a new terminal, running `command`."""
     return get_terminal().doScript_in_(command, 0)
 
 
 def prompt(question, default=''):
+    """Ask `question` and return `input` or `default` when cancelled."""
     current_tc_attr = tc_get()  # Save current
-    if Menu.init_tc_attr: tc_set(Menu.init_tc_attr)  # Restore initial
+    if Menu.init_tc_attr:  # Restore initial
+        tc_set(Menu.init_tc_attr)
     cprint(str(question) + ': ')
 
     try:
@@ -593,6 +704,8 @@ def prompt(question, default=''):
 
 
 def socket_connect(location):
+    """Connect to Unix socket at `location` and mirror key strokes."""
+
     def tap(s):
         import fcntl
         try:
@@ -610,6 +723,7 @@ def socket_connect(location):
 
 
 def socket_create():
+    """Returns a Unix socket, created using a temporary file."""
     from tempfile import _get_candidate_names, _get_default_tempdir
 
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -618,31 +732,37 @@ def socket_create():
     return s
 
 
-def sort_natural_key(s, _r=re.compile(r'(\d+)')):
-    return [int(t) if t.isdigit() else t.lower() for t in _r.split(s.item)]
+def sort_natural_key(_s, _r=re.compile(r'(\d+)')):
+    """Natural sorting key (number-aware)."""
+    return [int(t) if t.isdigit() else t.lower() for t in _r.split(_s.item)]
 
 
 def tc_get():
+    """Return list of current terminal attributes."""
     return termios.tcgetattr(sys.stdin.fileno())
 
 
 def tc_raw():
+    """Set terminal to raw mode."""
     import tty
     tty.setraw(sys.stdin.fileno())
 
 
 def tc_set(settings):
+    """Set attributes of stdin to settings (list of tty attributes)."""
     termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, settings)
 
 
 def main():
+    """Main entry point"""
     args = args_init()
 
     if args.reinit:  # Someone requested screen info
         print(get_screen(args.screen))
     elif args.mode is None:  # Spawn master window after some init code
         screen = get_screen(args.screen)
-        if not screen.startswith('_'): sys.exit(screen)  # An error message
+        if not screen.startswith('_'):  # An error message
+            sys.exit(screen)
 
         command = ' '.join([quote(x) for x in args.item]) + ' --mode master'
         title = MASTER_BASE_TITLE + ' '.join(args.item)
@@ -658,4 +778,5 @@ def main():
         s.close()  # Close socket
 
 
-if __name__ == '__main__': main()
+if __name__ == '__main__':
+    sys.exit(main())
