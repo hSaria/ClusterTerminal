@@ -1,5 +1,7 @@
 ClusterTerminal (`cterm`) forwards all keystrokes from a master window to multiple slave windows. Use `cterm` as a method for performing ad hoc tasks, not as a substitute for automation frameworks.
 
+> This is mostly just something I wanted to do out of fun; plenty of similar solutions out there, `tmux` being a very popular one.
+
 ![alt text](https://github.com/hSaria/ClusterTerminal/raw/master/.github/ssh_example.gif "Example output")
 
 # Installation
