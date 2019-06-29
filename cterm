@@ -117,7 +117,7 @@ class Master:
                 self.remove_slave(dead_slaves)  # Remove dead slaves
                 sleep(SOCKET_ALIVE_INTERVAL)
 
-        def exit_signal(signum, frame):
+        def exit_signal(_signum, _frame):
             self.exit()
 
         signal.signal(signal.SIGUSR1, exit_signal)
