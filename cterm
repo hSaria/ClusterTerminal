@@ -256,7 +256,6 @@ class Master:
     def exit(self):
         """Exit the program."""
         self.slaves = []  # Empty array to signal end for socket check thread
-        cprint()
         sys.exit()
 
     def send_text(self):
