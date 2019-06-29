@@ -76,22 +76,6 @@ class Master:
                 sleep(self.pause / 1000)
         self.arrange_windows()
 
-    def find_slave(self, location):
-        """Find a slave according to its location on the window grid."""
-        for slave in self.slaves:
-            if slave.window_position.location == location:
-                return slave
-        return None
-
-    def refresh_selection(self):
-        """Confirm that the currently selected slave window exists. Otherwise,
-        pick first slave. Return whether the current selection changed."""
-        if self.selected is None or self.find_slave(
-                self.selected.window_position.location) is None:
-            self.selected = self.slaves[0]
-            return True
-        return False
-
     def remove_slave(self, slaves):
         """Remove slave (or list of slaves) from master"""
         try:
@@ -132,6 +116,22 @@ class Master:
                 sleep(SOCKET_ALIVE_INTERVAL)
 
         threading.Thread(target=check).start()
+
+    def find_slave(self, location):
+        """Find a slave according to its location on the window grid."""
+        for slave in self.slaves:
+            if slave.window_position.location == location:
+                return slave
+        return None
+
+    def refresh_selection(self):
+        """Confirm that the currently selected slave window exists. Otherwise,
+        pick first slave. Return whether the current selection changed."""
+        if self.selected is None or self.find_slave(
+                self.selected.window_position.location) is None:
+            self.selected = self.slaves[0]
+            return True
+        return False
 
     def update_layout(self, new_column_count):
         """Update the column count, and subsequently the row count."""
@@ -191,19 +191,19 @@ class Master:
     def enable_windows(self):
         """Menu for managing which windows are enabled."""
 
-        def update_selection(x, y):
+        def update_selection(pos_x, pos_y):
             if self.refresh_selection():
                 return  # Selection changed; leave
 
             for i in range(1, max(self.rows, self.columns) + 1):
-                new_x = self.selected.window_position.location[0] + x * i
-                new_y = self.selected.window_position.location[1] + y * i
+                pos_x = self.selected.window_position.location[0] + pos_x * i
+                pos_y = self.selected.window_position.location[1] + pos_y * i
 
                 # Prevent out of bounds
-                new_x = max(min(self.columns - 1, new_x), 0)
-                new_y = max(min(self.rows - 1, new_y), 0)
+                pos_x = max(min(self.columns - 1, pos_x), 0)
+                pos_y = max(min(self.rows - 1, pos_y), 0)
 
-                slave = self.find_slave([new_x, new_y])
+                slave = self.find_slave([pos_x, pos_y])
                 if slave is not None:
                     self.selected.update_state(selected=False)
                     self.selected = slave
@@ -433,16 +433,21 @@ class Screen:
     def get_columns_default(self, count, columns=1):
         """Get a column count that would generate windows that closely reflect
         the aspect ratio of the screen. Leave `columns as 1`."""
-        w, h = self.width, self.u_height
+        width, height = self.width, self.u_height
         size = self.get_window_size(count, columns)
         ratio = size[1] / size[0]
-        if ratio > h / w:
+
+        if ratio > height / width:
             return {columns: ratio}
+
         ratios = {
             columns: ratio,
             **self.get_columns_default(count, columns + 1)
         }
-        key, value = min(ratios.items(), key=lambda x: abs(x[1] - h / w))
+
+        key, value = min(ratios.items(),
+                         key=lambda x: abs(x[1] - height / width))
+
         return key if columns == 1 else {key: value}
 
     def get_positions(self, count, columns):
@@ -455,13 +460,13 @@ class Screen:
                                        [self.width, self.master_height])
         positions = [master_window]  # First window position is the master
 
-        for r in reversed(range(rows)):  # Reversed(bottom to top)
-            for c in range(columns):  # Left to right
+        for row in reversed(range(rows)):  # Reversed(bottom to top)
+            for column in range(columns):  # Left to right
                 position = [
-                    self.origin_x + (c * size[0]),
-                    self.origin_y + self.master_height + (r * size[1])
+                    self.origin_x + (column * size[0]),
+                    self.origin_y + self.master_height + (row * size[1])
                 ]  # The y origin is flipped (0 is bottom, not top
-                location = [c, abs(rows - r - 1)]
+                location = [column, abs(rows - row - 1)]
                 positions.append(WindowPosition(location, position, size))
 
         return positions
@@ -614,13 +619,13 @@ def get_color(*args):
     """Returns an instance of NSColor. The input is one or more strings in the
     format of `r,g,b`, with each color as an 8-bit color (0 to 255)."""
     for color in args:
-        m = re.match(r'(\d+),(\d+),(\d+)', color)
-        if m:
+        match = re.match(r'(\d+),(\d+),(\d+)', color)
+        if match:
             from ScriptingBridge import NSColor
             return NSColor.colorWithDeviceRed_green_blue_alpha_(
-                int(m.group(1)) / 255,
-                int(m.group(2)) / 255,
-                int(m.group(3)) / 255, 0)
+                int(match.group(1)) / 255,
+                int(match.group(2)) / 255,
+                int(match.group(3)) / 255, 0)
     return None
 
 
@@ -659,9 +664,10 @@ def get_screen(screen_number=0, reinit=False):
     if screen_number > count:  # Out of bounds
         return 'Screen does not exist. ' + available
 
-    f = screens.objectAtIndex_(screen_number - 1).visibleFrame()
+    frame = screens.objectAtIndex_(screen_number - 1).visibleFrame()
     return '_' + ','.join([
-        str(x) for x in [f.origin.x, f.origin.y, f.size.width, f.size.height]
+        str(x) for x in
+        [frame.origin.x, frame.origin.y, frame.size.width, frame.size.height]
     ])
 
 
@@ -720,35 +726,35 @@ def prompt(question, default=''):
 def socket_connect(location):
     """Connect to Unix socket at `location` and mirror key strokes."""
 
-    def tap(s):
+    def tap(sock):
         import fcntl
         try:
             while True:
-                data = s.recv(1024).decode()
+                data = sock.recv(1024).decode()
 
                 if data == '':  # Got back no data; socket errored out
                     break  # Stop reading from the socket.
 
-                for c in data:
-                    fcntl.ioctl(sys.stdin, termios.TIOCSTI, c)
+                for char in data:
+                    fcntl.ioctl(sys.stdin, termios.TIOCSTI, char)
         except Exception:
             pass
 
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.connect(location)
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.connect(location)
 
-    threading.Thread(target=tap, args=(s, )).start()
-    return s
+    threading.Thread(target=tap, args=(sock, )).start()
+    return sock
 
 
 def socket_create():
     """Returns a Unix socket, created using a temporary file."""
     from tempfile import _get_candidate_names, _get_default_tempdir
 
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.bind(_get_default_tempdir() + '/' + next(_get_candidate_names()))
-    s.listen()
-    return s
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.bind(_get_default_tempdir() + '/' + next(_get_candidate_names()))
+    sock.listen()
+    return sock
 
 
 def sort_natural_key(_s, _r=re.compile(r'(\d+)')):
@@ -786,15 +792,15 @@ def main():
         command = ' '.join([quote(x) for x in args.item]) + ' --mode master'
         title = MASTER_BASE_TITLE + ' '.join(args.item)
 
-        t = open_terminal(get_base_command(args, title).format(command))
-        t.setBackgroundColor_(get_color(args.mw_c, MASTER_COLOR))
-        t.setNormalTextColor_(get_color('255,255,255'))
+        term = open_terminal(get_base_command(args, title).format(command))
+        term.setBackgroundColor_(get_color(args.mw_c, MASTER_COLOR))
+        term.setNormalTextColor_(get_color('255,255,255'))
     elif args.mode == 'master':  # Master window: spawns and controls slaves
         Master(args, get_base_command(args))
     elif args.mode == 'slave':  # Slave window: runs command and reads input
-        s = socket_connect(args.socket)  # Start mirror keystrokes
+        sock = socket_connect(args.socket)  # Start mirror keystrokes
         os.system(quote(args.command) + ' ' + quote(args.item[0]))
-        s.close()  # Close socket
+        sock.close()  # Close socket
 
 
 if __name__ == '__main__':
