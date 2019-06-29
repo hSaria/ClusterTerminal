@@ -26,7 +26,7 @@ MASTER_HEIGHT_MIN = 45
 MENU_CHAR = 19  # CTRL+S. Value from 1 to 26, corresponding to the alphabet.
 SLAVE_COLOR = '0,0,0'
 SLAVE_DISABLED_COLOR = '30,30,30'
-SLAVE_SELECTED_BLUE_SHIFT = 60
+SLAVE_SELECTED_SHIFT = '0,0,60'
 SOCKET_ALIVE_INTERVAL = 0.5  # How often to check for open sockets
 SOCKET_TIMEOUT = 0.0001  # Used to check if socket is still alive
 TERMINAL = None  # Search for the bundle identifier once and set it here
@@ -38,14 +38,13 @@ class Master:
     def __init__(self, args, base_command):
         # Asumption: Launcher checked screen ID before creating master window
         height = min(max(MASTER_HEIGHT_MIN, args.mw_h), MASTER_HEIGHT_MAX)
+        self.args = args
         self.base_command = base_command
         self.columns = None  # Generate using the aspect ratio
         self.pause = args.pause
         self.rows = None  # Match with columns' time of calculation
         self.screen = Screen(height, args.screen)
         self.selected = None
-        self.slave_bg_disabled = get_color(args.sw_c_d, SLAVE_DISABLED_COLOR)
-        self.slave_bg_normal = get_color(args.sw_c, SLAVE_COLOR)
         self.slaves = []
         self.socket = socket_create()
         self.window_id = get_window_id(os.ttyname(sys.stdout.fileno()))
@@ -71,8 +70,7 @@ class Master:
         """Create slaves and arrange windows afterwards."""
         for item in items:
             self.slaves.append(
-                Slave(self.base_command, self.slave_bg_normal,
-                      self.slave_bg_disabled, item, self.socket))
+                Slave(self.args, self.base_command, item, self.socket))
 
             if items[-1] != item:  # Inter-window pause, but not on last window
                 sleep(self.pause / 1000)
@@ -298,12 +296,13 @@ class Slave:
     """Spawns a Slave window for the master to command."""
     ID = 0  # Per-instance ID; increments during __init__
 
-    def __init__(self, base_command, bg_normal, bg_disabled, item, sock):
+    def __init__(self, args, base_command, item, sock):
         Slave.ID += 1
         command = quote(item) + ' --mode slave --socket ' + sock.getsockname()
 
-        self.bg_disabled = bg_disabled
-        self.bg_normal = bg_normal
+        self.bg_disabled = get_color(args.sw_c_d, SLAVE_DISABLED_COLOR)
+        self.bg_normal = get_color(args.sw_c, SLAVE_COLOR)
+        self.bg_shift = get_color(args.selected, SLAVE_SELECTED_SHIFT)
         self.enabled = True
         self.item = item
         self.selected = False
@@ -332,11 +331,18 @@ class Slave:
         if selected is not None:
             self.selected = selected
 
-        blue_shift = SLAVE_SELECTED_BLUE_SHIFT if self.selected else 0
+        if self.selected:
+            shift_r = self.bg_shift.redComponent()
+            shift_g = self.bg_shift.greenComponent()
+            shift_b = self.bg_shift.blueComponent()
+        else:
+            shift_r = shift_g = shift_b = 0
+
         color = self.bg_normal if self.enabled else self.bg_disabled
         color = get_color('{},{},{}'.format(
-            int(color.redComponent() * 255), int(color.greenComponent() * 255),
-            int(color.blueComponent() * 255 + blue_shift)))
+            int((color.redComponent() + shift_r) * 255),
+            int((color.greenComponent() + shift_g) * 255),
+            int((color.blueComponent() + shift_b) * 255)))
 
         self.tab.setBackgroundColor_(color)
 
@@ -504,61 +510,68 @@ def args_init():
     """Initialzes arguments and returns the output of `parse_args`"""
     import argparse
 
-    p = argparse.ArgumentParser(
+    parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-    p.add_argument('command',
-                   type=str,
-                   help='the command to run on each item. Can include ' +
-                   'arguments if quoted')
-    p.add_argument('item',
-                   type=str,
-                   nargs='+',
-                   help='one or more items, each passed as a positional ' +
-                   'argument to an instance of the command')
-    p.add_argument('-k',
-                   '--keep',
-                   action='store_true',
-                   help='keep windows open even after command exits cleanly')
-    p.add_argument('-p',
-                   '--pause',
-                   type=int,
-                   metavar='ms',
-                   help='milliseconds to wait between each window',
-                   default=0)
-    p.add_argument('-s',
-                   '--screen',
-                   type=int,
-                   metavar='id',
-                   help='screen number to display windows on',
-                   default=1)
-    p.add_argument('--mw-c',
-                   type=str,
-                   metavar='r,g,b',
-                   help='color of the master window',
-                   default=MASTER_COLOR)
-    p.add_argument('--mw-h',
-                   type=int,
-                   metavar='px',
-                   help='height of the master window',
-                   default=MASTER_HEIGHT_MIN)
-    p.add_argument('--sw-c',
-                   type=str,
-                   metavar='r,g,b',
-                   help='color of a slave window',
-                   default=SLAVE_COLOR)
-    p.add_argument('--sw-c-d',
-                   type=str,
-                   metavar='r,g,b',
-                   help='color of a disabled slave window',
-                   default=SLAVE_DISABLED_COLOR)
+    parser.add_argument('command',
+                        type=str,
+                        help='the command to run on each item. Can include' +
+                        ' arguments if quoted')
+    parser.add_argument('item',
+                        type=str,
+                        nargs='+',
+                        help='one or more items, each passed as a positional' +
+                        ' argument to an instance of the command')
+    parser.add_argument('-k',
+                        '--keep',
+                        action='store_true',
+                        help='keep windows even after command exits cleanly')
+    parser.add_argument('-p',
+                        '--pause',
+                        type=int,
+                        metavar='ms',
+                        help='milliseconds to wait between each window',
+                        default=0)
+    parser.add_argument('-s',
+                        '--screen',
+                        type=int,
+                        metavar='id',
+                        help='screen number to display windows on',
+                        default=1)
+    parser.add_argument('--selected',
+                        type=str,
+                        metavar='r,g,b',
+                        help='color shift when window is selected',
+                        default=SLAVE_SELECTED_SHIFT)
+    parser.add_argument('--mw-c',
+                        type=str,
+                        metavar='r,g,b',
+                        help='color of the master window',
+                        default=MASTER_COLOR)
+    parser.add_argument('--mw-h',
+                        type=int,
+                        metavar='px',
+                        help='height of the master window',
+                        default=MASTER_HEIGHT_MIN)
+    parser.add_argument('--sw-c',
+                        type=str,
+                        metavar='r,g,b',
+                        help='color of a slave window',
+                        default=SLAVE_COLOR)
+    parser.add_argument('--sw-c-d',
+                        type=str,
+                        metavar='r,g,b',
+                        help='color of a disabled slave window',
+                        default=SLAVE_DISABLED_COLOR)
 
     # Hidden arguments relating to program internals
-    p.add_argument('--mode', type=str, help=argparse.SUPPRESS)
-    p.add_argument('--reinit', action='store_true', help=argparse.SUPPRESS)
-    p.add_argument('--socket', type=str, help=argparse.SUPPRESS)
+    parser.add_argument('--mode', type=str, help=argparse.SUPPRESS)
+    parser.add_argument('--socket', type=str, help=argparse.SUPPRESS)
+    parser.add_argument('--reinit',
+                        action='store_true',
+                        help=argparse.SUPPRESS)
 
-    return p.parse_args()
+    return parser.parse_args()
 
 
 def cprint(string=None):
@@ -584,6 +597,7 @@ def get_base_command(args, title='{}'):
     carried.append(BIN_LOCATION)  # cterm location
     carried += ['--pause', str(args.pause)]
     carried += ['--screen', str(args.screen)]
+    carried += ['--selected', str(args.selected)]
     carried += ['--mw-h', str(args.mw_h)]
     carried += ['--sw-c', str(args.sw_c)]
     carried += ['--sw-c-d', str(args.sw_c_d)]
