@@ -30,7 +30,6 @@ SLAVE_DISABLED_COLOR = '30,30,30'
 SLAVE_SELECTED_SHIFT = '0,0,60'
 SOCKET_ALIVE_INTERVAL = 0.5  # How often to check for open sockets
 SOCKET_TIMEOUT = 0.0001  # Used to check if socket is still alive
-TERMINAL = None  # Search for the bundle identifier once and set it here
 
 
 class Master:
@@ -685,13 +684,7 @@ def get_screen_bounds(details):
 def get_terminal():
     """Returns the SBApplication for the Terminal bundle"""
     from ScriptingBridge import SBApplication
-    global TERMINAL
-    if TERMINAL is None:
-        bundle = 'com.apple.Terminal'
-        TERMINAL = SBApplication.applicationWithBundleIdentifier_(bundle)
-        if TERMINAL is None:
-            sys.exit('Did not find {}'.format(bundle))
-    return TERMINAL
+    return SBApplication.applicationWithBundleIdentifier_('com.apple.Terminal')
 
 
 def get_window(window_id):
