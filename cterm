@@ -6,6 +6,8 @@ not as a substitute for automation frameworks.
 Todo:
     * Simplify the Master class; some of its functionality should be moved out,
         possibly to the Screen class.
+    * Add timeout to master's listening period, afterwhich the slave is presumed
+        dead.
 """
 
 # pylint: disable=no-name-in-module  # ScriptingBridge is dynamically built
