@@ -36,6 +36,7 @@ SLAVE_SELECTED_SHIFT = '0,0,60'
 SOCKET_ALIVE_INTERVAL = 0.5  # How often to check for open sockets
 SOCKET_TIMEOUT_CONNECT = 5  # How long to wait for a slave to connect
 SOCKET_TIMEOUT_DEAD = 0.0001  # Used to check if socket is still alive
+TERMINAL_ATTRIBS = termios.tcgetattr(sys.stdin.fileno())  # Initial attributes
 
 
 class Master:
@@ -363,14 +364,10 @@ class Slave:
 
 class Menu:
     """A menuing system that uses a list of "binds" for navigation."""
-    init_tc_attr = None  # The initial attributes of the terminal
 
     def __init__(self, send=None):
         self.binds = []
         self.send = send
-
-        if Menu.init_tc_attr is None:
-            Menu.init_tc_attr = tc_get()
 
     def add_bind(self, action, key, msg=None, remain=False):
         """Add a bind to the menu which calls `action` when `key` is hit and
@@ -389,7 +386,9 @@ class Menu:
         listen_msg = '[CTRL+{}] enter menu'.format(chr(MENU_CHAR + 64))
 
         try:
-            tc_raw()
+            import tty
+            tty.setraw(sys.stdin.fileno())  # Set terminal to raw mode
+
             cprint(listen_msg)
 
             while True:
@@ -401,7 +400,7 @@ class Menu:
                 elif self.send is not None:
                     self.send(char)
         finally:
-            tc_set(Menu.init_tc_attr)
+            tc_set(TERMINAL_ATTRIBS)  # Restore initial attributes
 
     def main(self):
         """Enters the menu. Exits with ESC."""
@@ -718,9 +717,8 @@ def open_terminal(command):
 
 def prompt(question, default=''):
     """Ask `question` and return `input` or `default` when cancelled."""
-    current_tc_attr = tc_get()  # Save current
-    if Menu.init_tc_attr:  # Restore initial
-        tc_set(Menu.init_tc_attr)
+    current_tc_attr = termios.tcgetattr(sys.stdin.fileno())  # Save current
+    tc_set(TERMINAL_ATTRIBS)  # Restore initial attributes
     cprint(str(question) + ': ')
 
     try:
@@ -769,17 +767,6 @@ def socket_create():
 def sort_natural_key(_s, _r=re.compile(r'(\d+)')):
     """Natural sorting key (number-aware)."""
     return [int(t) if t.isdigit() else t.lower() for t in _r.split(_s.item)]
-
-
-def tc_get():
-    """Return list of current terminal attributes."""
-    return termios.tcgetattr(sys.stdin.fileno())
-
-
-def tc_raw():
-    """Set terminal to raw mode."""
-    import tty
-    tty.setraw(sys.stdin.fileno())
 
 
 def tc_set(settings):
