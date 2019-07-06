@@ -6,8 +6,6 @@ not as a substitute for automation frameworks.
 Todo:
     * Simplify the Master class; some of its functionality should be moved out,
         possibly to the Screen class.
-    * Add timeout to master's listening period, afterwhich the slave is presumed
-        dead.
     * iTerm2 support.
     * Argument: Command arguments
 """
@@ -36,6 +34,7 @@ SLAVE_COLOR = '0,0,0'
 SLAVE_DISABLED_COLOR = '30,30,30'
 SLAVE_SELECTED_SHIFT = '0,0,60'
 SOCKET_ALIVE_INTERVAL = 0.5  # How often to check for open sockets
+SOCKET_TIMEOUT_CONNECT = 5  # How long to wait for a slave to connect
 SOCKET_TIMEOUT_DEAD = 0.0001  # Used to check if socket is still alive
 
 
@@ -76,8 +75,12 @@ class Master:
     def create_slaves(self, items):
         """Create slaves and arrange windows afterwards."""
         for item in items:
-            self.slaves.append(
-                Slave(self.args, self.base_command, item, self.socket))
+            try:
+                slave = Slave(self.args, self.base_command, item, self.socket)
+            except socket.timeout:
+                continue
+
+            self.slaves.append(slave)
 
             if items[-1] != item:  # Inter-window pause, but not on last window
                 sleep(self.pause / 1000)
@@ -758,6 +761,7 @@ def socket_create():
 
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.bind(_get_default_tempdir() + '/' + next(_get_candidate_names()))
+    sock.settimeout(SOCKET_TIMEOUT_CONNECT)
     sock.listen()
     return sock
 
