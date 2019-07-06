@@ -599,17 +599,15 @@ def cprint(string=None):
         print(string, end='', flush=True)
 
 
-def get_base_command(args, title='{}'):
+def get_base_command(args):
     """Returns a string containing the command to be used as a format string.
 
     Parameters:
         args (argparse.Namespace): The arguments returns from `args_init`.
-        title (str): The terminal title to set. Defaults to `{}` to be used in
-            the format string.
     """
     carried = ['history -d $(($HISTCMD-1));']  # Remove from history
     carried.append('clear && printf \'\\e[3J\';')  # Clear screen
-    carried.append('printf \'\\e]0;%s\\a\' \'{}\';'.format(title))  # Set title
+    carried.append('printf \'\\e]0;%s\\a\' \'{}\';')  # Title format field
     if not args.keep:  # Close on clean exit
         carried.append('if')
     carried.append(BIN_LOCATION)  # cterm location
@@ -788,7 +786,7 @@ def main():
         command = ' '.join([quote(x) for x in args.item]) + ' --mode master'
         title = MASTER_BASE_TITLE + ' '.join(args.item)
 
-        term = open_terminal(get_base_command(args, title).format(command))
+        term = open_terminal(get_base_command(args).format(title, command))
         term.setBackgroundColor_(get_color(args.mw_c, MASTER_COLOR))
         term.setNormalTextColor_(get_color('255,255,255'))
     elif args.mode == 'master':  # Master window: spawns and controls slaves
