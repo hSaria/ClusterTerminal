@@ -6,7 +6,6 @@ not as a substitute for automation frameworks.
 Todo:
     * Simplify the Master class; some of its functionality should be moved out,
         possibly to the Screen class.
-    * iTerm2 support.
     * Argument: Command arguments
 """
 
