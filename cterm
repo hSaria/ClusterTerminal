@@ -620,7 +620,7 @@ def get_base_command(args):
     if args.keep:
         carried.append('--keep')
     carried.append(quote(args.command))  # Escape command to run
-    carried.append('{}')  # Used for the items
+    carried.append('{}')  # Item format field
     if not args.keep:  # Close on clean exit
         carried.append('; then exit; fi')
     return ' '.join(carried)
@@ -662,7 +662,7 @@ def get_screen(screen_number=0, reinit=False):
     # Hide the Python launcher icon
     NSBundle.mainBundle().infoDictionary()['LSBackgroundOnly'] = '1'
 
-    # Connect to the Window Server and run initializing code.
+    # Connect to the Window Server and run initializing code
     NSApplication.sharedApplication()
 
     screens = NSScreen.screens()
