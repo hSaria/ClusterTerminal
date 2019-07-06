@@ -7,6 +7,7 @@ Todo:
     * Simplify the Master class; some of its functionality should be moved out,
         possibly to the Screen class.
     * Argument: Command arguments
+    * Menu bind -> send text: add round-robin text
 """
 
 # pylint: disable=no-name-in-module  # ScriptingBridge is dynamically built
