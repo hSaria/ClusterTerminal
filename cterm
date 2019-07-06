@@ -4,8 +4,6 @@ multiple slave windows. Use `cterm` as a method for performing ad hoc tasks,
 not as a substitute for automation frameworks.
 
 Todo:
-    * Simplify the Master class; some of its functionality should be moved out,
-        possibly to the Screen class.
     * Argument: Command arguments
     * Menu bind -> send text: add round-robin text
 """
@@ -42,192 +40,88 @@ TERMINAL_ATTRIBS = termios.tcgetattr(sys.stdin.fileno())  # Initial attributes
 class Master:
     """The brain of the operation where the orchestration happens."""
 
-    def __init__(self, args, base_command):
+    def __init__(self, args):
         # Asumption: Launcher checked screen ID before creating master window
         height = min(max(MASTER_HEIGHT_MIN, args.mw_h), MASTER_HEIGHT_MAX)
         self.args = args
-        self.base_command = base_command
-        self.columns = None  # Generate using the aspect ratio
-        self.pause = args.pause
-        self.rows = None  # Match with columns' time of calculation
-        self.screen = Screen(height, args.screen)
         self.selected = None
         self.slaves = []
         self.socket = socket_create()
-        self.window_id = get_window_id(os.ttyname(sys.stdout.fileno()))
+        self.window = Window(get_window_id(os.ttyname(sys.stdout.fileno())))
 
         self.create_slaves(args.item)
         self.socket_connected_check()  # Start the socket check
+
+        self.screen = Screen(height, self.window, args.screen, self.slaves)
 
         menu = Menu(self.send)
         menu.add_bind(self.add_items, 'a', '[a]dd items')
         menu.add_bind(self.enable_windows, 'e', '[e]nable')
         menu.add_bind(self.sort_slaves, 'o', 's[o]rt')
-        menu.add_bind(self.arrange_windows, 'r', '[r]earrage')
-        menu.add_bind(self.change_screen, 's', 'change [s]creen')
+        menu.add_bind(self.screen.arrange_windows, 'r', '[r]earrage')
+        menu.add_bind(self.screen.change_screen, 's', 'change [s]creen')
         menu.add_bind(self.send_text, 't', 'send [t]ext')
-        menu.add_bind(self.column_decrease, '<', '[<|>] change column count',
-                      True)
-        menu.add_bind(self.column_increase, '>', remain=True)
+        menu.add_bind(self.screen.column_decrease, '<',
+                      '[<|>] change column count', True)
+        menu.add_bind(self.screen.column_increase, '>', remain=True)
         menu.add_bind(self.exit, 'x', 'e[x]it')
         menu.listen()
 
+    def add_items(self):
+        """Add additional items (slaves). Used as a menu bind."""
+        items = prompt('Items')
+
+        if items.strip() != '':
+            self.create_slaves(split(items))  # shelx.split to get list of args
+            self.update_title()
+            self.screen.arrange_windows()
+
     def create_slaves(self, items):
-        """Create slaves and arrange windows afterwards."""
+        """Create slaves, one for each item in items."""
         for item in items:
             try:
-                slave = Slave(self.args, self.base_command, item, self.socket)
-            except socket.timeout:
+                slave = Slave(self.args, item, self.socket)
+            except socket.timeout:  # Slave didn't connect; skip it
                 continue
 
             self.slaves.append(slave)
 
             if items[-1] != item:  # Inter-window pause, but not on last window
-                sleep(self.pause / 1000)
-        self.arrange_windows()
+                sleep(self.args.pause / 1000)
 
-    def remove_slave(self, slaves):
+    def delete_slave(self, slaves):
         """Remove slave (or list of slaves) from master"""
-        try:
-            if not isinstance(slaves, list):
-                slaves = [slaves]
-            for slave in slaves:
-                self.slaves.remove(slave)
-        except ValueError:
-            pass
-        self.update_title()
-
-    def send(self, string):
-        """Send a string to all slaves (disabled ones will ignore it)."""
-        for slave in self.slaves:
+        for slave in slaves if isinstance(slaves, list) else [slaves]:
             try:
-                slave.send(string)
-            except Exception:
-                self.remove_slave(slave)
-
-    def socket_connected_check(self):
-        """Check whether all connections to the socket as still active. Remove
-        the slaves with a dead connection. Exit when all slaves are dead."""
-
-        def check():
-            while True:
-                dead_slaves = []
-                for slave in self.slaves:
-                    try:
-                        slave.conn.recv(1)
-                    except socket.timeout:
-                        continue  # Timed-out; someone is still there!
-                    dead_slaves.append(slave)
-
-                if self.slaves == dead_slaves:  # Everyone's dead
-                    os.kill(os.getpid(), signal.SIGUSR1)  # Tell main to exit
-                    break
-
-                self.remove_slave(dead_slaves)  # Remove dead slaves
-                sleep(SOCKET_ALIVE_INTERVAL)
-
-        def exit_signal(_signum, _frame):
-            self.exit()
-
-        signal.signal(signal.SIGUSR1, exit_signal)
-        threading.Thread(target=check).start()
-
-    def find_slave(self, location):
-        """Find a slave according to its location on the window grid."""
-        for slave in self.slaves:
-            if slave.window_position.location == location:
-                return slave
-        return None
-
-    def refresh_selection(self):
-        """Confirm that the currently selected slave window exists. Otherwise,
-        pick first slave. Return whether the current selection changed."""
-        if self.selected is None or self.find_slave(
-                self.selected.window_position.location) is None:
-            self.selected = self.slaves[0]
-            return True
-        return False
-
-    def update_layout(self, new_column_count):
-        """Update the column count, and subsequently the row count."""
-        self.columns = max(1, min(len(self.slaves), new_column_count))
-        self.rows = ceil(len(self.slaves) / self.columns)
-
-    def update_title(self):
-        """Update the title according the current list of slaves."""
-        title = MASTER_BASE_TITLE + ' – ' + ' '.join(
-            [x.item for x in self.slaves])
-        os.system('printf \'\\e]0;%s\\a\' \'{}\';'.format(title))
-
-    def add_items(self):
-        """Add additional items (slaves)."""
-        items = prompt('Items')
-
-        if items.strip() != '':
-            self.create_slaves(split(items))  # shelx.split to get list of args
+                self.slaves.remove(slave)
+            except ValueError:
+                pass
         self.update_title()
-
-    def arrange_windows(self):
-        """Arrange the windows on the grid according the current column count.
-        Remove any slaves without active windows IDs."""
-        self.remove_slave(  # Remove slaves with unknown windows; likely closed
-            [x for x in self.slaves if get_window(x.window_id) is None])
-
-        if self.columns is None:
-            self.columns = self.screen.get_columns_default(len(self.slaves))
-        positions = self.screen.get_positions(len(self.slaves), self.columns)
-        self.update_layout(self.columns)
-
-        for slave, position in zip(self.slaves, positions[1:]):
-            slave.window_position = position
-            slave.window_position.move_window(get_window(slave.window_id))
-        positions[0].move_window(get_window(self.window_id))  # Master window
-        self.refresh_selection()
-
-    def change_screen(self):
-        """Call upon the Screen instance to change the screen used. If changed,
-        rearrange the windows."""
-        if self.screen.change_screen():
-            self.arrange_windows()
-
-    def column_decrease(self):
-        """Decrease the column count of the grid of windows."""
-        current = self.columns
-        self.update_layout(self.columns - 1)
-        if current != self.columns:  # Layout changed
-            self.arrange_windows()
-
-    def column_increase(self):
-        """Increase the column count of the grid of windows."""
-        current = self.columns
-        self.update_layout(self.columns + 1)
-        if current != self.columns:  # Layout changed
-            self.arrange_windows()
 
     def enable_windows(self):
-        """Menu for managing which windows are enabled."""
+        """Menu bind for managing which windows are enabled."""
 
-        def update_selection(pos_x, pos_y):
+        def update_selection(move_x, move_y):
             if self.refresh_selection():
                 return  # Selection changed; leave
 
-            for i in range(1, max(self.rows, self.columns) + 1):
-                pos_x = self.selected.window_position.location[0] + pos_x * i
-                pos_y = self.selected.window_position.location[1] + pos_y * i
+            # Maximum number of steps to attempt to reach the next window
+            max_steps = max(self.screen.rows(), self.screen.columns) + 1
+
+            for i in range(1, max_steps):
+                pos_x = self.selected.window.location[0] + move_x * i
+                pos_y = self.selected.window.location[1] + move_y * i
 
                 # Prevent out of bounds
-                pos_x = max(min(self.columns - 1, pos_x), 0)
-                pos_y = max(min(self.rows - 1, pos_y), 0)
+                pos_x = max(min(self.screen.columns - 1, pos_x), 0)
+                pos_y = max(min(self.screen.rows() - 1, pos_y), 0)
 
                 slave = self.find_slave([pos_x, pos_y])
-                if slave is not None:
+                if slave is not None:  # Found new selection
                     self.selected.update_state(selected=False)
                     self.selected = slave
                     self.selected.update_state(selected=True)
                     break
-
-        self.refresh_selection()
-        self.selected.update_state(selected=True)  # Highlight selected
 
         def disable_odd():
             for slave in self.slaves[1::2]:
@@ -239,10 +133,11 @@ class Master:
 
         def toggle_all():
             for slave in self.slaves:
-                slave.update_state(enabled=not slave.enabled)
+                slave.update_state(enabled=not slave.status['enabled'])
 
         def toggle_selected():
-            self.selected.update_state(enabled=not self.selected.enabled)
+            self.selected.update_state(
+                enabled=not self.selected.status['enabled'])
 
         def move_up():
             update_selection(0, -1)
@@ -255,6 +150,9 @@ class Master:
 
         def move_right():
             update_selection(1, 0)
+
+        self.refresh_selection()
+        self.selected.update_state(selected=True)  # Highlight selected
 
         menu = Menu()
         menu.add_bind(move_up, 'w', '[WASD] move selection', True)
@@ -274,6 +172,30 @@ class Master:
         self.slaves = []  # Empty array to signal end for socket check thread
         sys.exit()
 
+    def find_slave(self, location):
+        """Find a slave with the location of `location`."""
+        for slave in self.slaves:
+            if slave.window.location == location:
+                return slave
+        return None
+
+    def refresh_selection(self):
+        """Confirm that the currently selected slave window exists. Otherwise,
+        pick the first slave. Return whether the current selection changed."""
+        if self.selected is None or self.find_slave(
+                self.selected.window.location) is None:
+            self.selected = self.slaves[0]
+            return True
+        return False
+
+    def send(self, string):
+        """Send a string to all slaves (disabled ones will ignore it)."""
+        for slave in self.slaves:
+            try:
+                slave.send(string)
+            except Exception:
+                self.delete_slave(slave)
+
     def send_text(self):
         """Send relative text to each slave."""
 
@@ -290,76 +212,114 @@ class Master:
         menu.add_bind(send_item, 't', 'i[t]em')
         menu.main()
 
+    def socket_connected_check(self):
+        """Start a thread to check whether all socket connections are alive.
+        Remove slaves with a dead connection. Exit when all slaves are dead."""
+
+        def check():
+            while True:
+                dead_slaves = []
+
+                for slave in self.slaves:
+                    try:
+                        slave.conn.recv(1)
+                    except socket.timeout:
+                        continue  # Timed-out; slave is still alive
+                    dead_slaves.append(slave)
+
+                if self.slaves == dead_slaves:  # Everyone's dead
+                    os.kill(os.getpid(), signal.SIGUSR1)  # Tell main to exit
+                    break
+
+                self.delete_slave(dead_slaves)  # Remove dead slaves
+                sleep(SOCKET_ALIVE_INTERVAL)
+
+        def exit_signal(_signum, _frame):
+            self.exit()
+
+        signal.signal(signal.SIGUSR1, exit_signal)
+        threading.Thread(target=check).start()
+
     def sort_slaves(self):
         """Sort the slave windows."""
 
         def by_id():
-            self.slaves = sorted(self.slaves, key=lambda x: x.sid)
-            self.arrange_windows()
+            self.slaves.sort(key=lambda x: x.sid)
+            self.screen.arrange_windows()
 
         def by_natural():
-            self.slaves = sorted(self.slaves, key=sort_natural_key)
-            self.arrange_windows()
+            self.slaves.sort(key=sort_natural_key)
+            self.screen.arrange_windows()
 
         menu = Menu()
         menu.add_bind(by_id, 'i', '[i]d')
         menu.add_bind(by_natural, 'n', '[n]atural')
         menu.main()
 
+    def update_title(self):
+        """Update the title according the current list of slaves."""
+        title = MASTER_BASE_TITLE + ' – ' + ' '.join(
+            [x.item for x in self.slaves])
+        os.system('printf \'\\e]0;%s\\a\' \'{}\';'.format(title))
+
 
 class Slave:
     """Spawns a Slave window for the master to command."""
     ID = 0  # Per-instance ID; increments during __init__
 
-    def __init__(self, args, base_command, item, sock):
+    def __init__(self, args, item, sock):
         Slave.ID += 1
-        command = quote(item) + ' --mode slave --socket ' + sock.getsockname()
+        command = get_base_command(args).format(
+            item,
+            quote(item) + ' --mode s --socket ' + sock.getsockname())
 
-        self.bg_disabled = get_color(args.sw_c_d, SLAVE_DISABLED_COLOR)
-        self.bg_normal = get_color(args.sw_c, SLAVE_COLOR)
-        self.bg_shift = get_color(args.selected, SLAVE_SELECTED_SHIFT)
-        self.enabled = True
+        terminal = open_terminal(command)
+
+        self.colors = {
+            'disabled': get_color(args.sw_c_d, SLAVE_DISABLED_COLOR),
+            'normal': get_color(args.sw_c, SLAVE_COLOR),
+            'selected_shift': get_color(args.selected, SLAVE_SELECTED_SHIFT)
+        }
         self.item = item
-        self.selected = False
         self.sid = Slave.ID
-        self.tab = open_terminal(base_command.format(item, command))
-        self.window_id = get_window_id(self.tab.tty())
-        self.window_position = None
+        self.status = {'enabled': True, 'selected': False}
+        self.window = Window(get_window_id(terminal.tty()))
 
         self.conn, _ = sock.accept()
         self.conn.settimeout(SOCKET_TIMEOUT_DEAD)  # For socket state check
 
-        # The text color is set to white in case it's someting else
-        self.tab.setNormalTextColor_(get_color('255,255,255'))
+        # The text color is set to white in case the default is something else
+        self.window.set_color(get_color('255,255,255'), True)
         self.update_state()  # Update color
 
     def send(self, string):
         """Send `string` to the slave's window."""
-        if self.enabled:
+        if self.status['enabled']:
             for char in string:
                 self.conn.send(str.encode(char))
 
     def update_state(self, enabled=None, selected=None):
         """update the state of the slave and, accordingly, its window color."""
         if enabled is not None:
-            self.enabled = enabled
+            self.status['enabled'] = enabled
         if selected is not None:
-            self.selected = selected
+            self.status['selected'] = selected
 
-        if self.selected:
-            shift_r = self.bg_shift.redComponent()
-            shift_g = self.bg_shift.greenComponent()
-            shift_b = self.bg_shift.blueComponent()
+        if self.status['selected']:
+            shift_r = self.colors['selected_shift'].redComponent()
+            shift_g = self.colors['selected_shift'].greenComponent()
+            shift_b = self.colors['selected_shift'].blueComponent()
         else:
             shift_r = shift_g = shift_b = 0
 
-        color = self.bg_normal if self.enabled else self.bg_disabled
+        color = self.colors['normal'] if self.status[
+            'enabled'] else self.colors['disabled']
         color = get_color('{},{},{}'.format(
             int((color.redComponent() + shift_r) * 255),
             int((color.greenComponent() + shift_g) * 255),
             int((color.blueComponent() + shift_b) * 255)))
 
-        self.tab.setBackgroundColor_(color)
+        self.window.set_color(color)
 
 
 class Menu:
@@ -428,9 +388,41 @@ class Menu:
 class Screen:
     """Represent a screen and its bounds"""
 
-    def __init__(self, master_height, screen_id):
+    def __init__(self, master_height, master_window, screen_id, slaves):
         self.master_height = master_height
+        self.master_window = master_window
+        self.slaves = slaves
         self.update_bounds(get_screen_bounds(get_screen(screen_id)))
+
+        self.columns = self.get_columns_default()
+        self.arrange_windows()
+
+    def arrange_windows(self):
+        """Arrange the windows on the grid according the current column count."""
+        self.columns = max(1, min(len(self.slaves), self.columns))
+        rows = self.rows()
+        size = self.get_window_size(self.columns)
+
+        bounds = []
+
+        for row in reversed(range(rows)):  # Reversed(bottom to top)
+            for column in range(self.columns):  # Left to right
+                position = [
+                    self.origin[0] + (column * size[0]),
+                    self.origin[1] + self.master_height + (row * size[1])
+                ]  # The y origin is flipped (0 is bottom, not top
+                location = [column, abs(rows - row - 1)]
+                bounds.append((location, position, size))
+
+        for bound, slave in zip(bounds, self.slaves):
+            slave.window.location = bound[0]
+            slave.window.origin = bound[1]
+            slave.window.size = bound[2]
+            slave.window.move_window()
+
+        self.master_window.origin = self.origin
+        self.master_window.size = [self.width, self.master_height]
+        self.master_window.move_window()
 
     def change_screen(self):
         """Change the current screen, taking into account the new bounds. If
@@ -440,75 +432,65 @@ class Screen:
             screen = get_screen(int(screen), reinit=True)
             if screen.startswith('_'):  # Valid response; got coordinates
                 self.update_bounds(get_screen_bounds(screen))
-                return True  # Changed successfully
-        return False
+                self.arrange_windows()
 
-    def get_columns_default(self, count, columns=1):
+    def column_decrease(self):
+        """Decrease the column count of the grid of windows."""
+        current = self.columns
+        self.columns = max(1, min(len(self.slaves), self.columns - 1))
+        if current != self.columns:  # Layout changed
+            self.arrange_windows()
+
+    def column_increase(self):
+        """Increase the column count of the grid of windows."""
+        current = self.columns
+        self.columns = max(1, min(len(self.slaves), self.columns + 1))
+        if current != self.columns:  # Layout changed
+            self.arrange_windows()
+
+    def get_columns_default(self, columns=1):
         """Get a column count that would generate windows that closely reflect
-        the aspect ratio of the screen. Leave `columns as 1`."""
-        width, height = self.width, self.u_height
-        size = self.get_window_size(count, columns)
+        the aspect ratio of the screen bounds."""
+        width, height = self.width, self.height
+        size = self.get_window_size(columns)
         ratio = size[1] / size[0]
 
         if ratio > height / width:
             return {columns: ratio}
 
-        ratios = {
-            columns: ratio,
-            **self.get_columns_default(count, columns + 1)
-        }
+        ratios = {columns: ratio, **self.get_columns_default(columns + 1)}
 
         key, value = min(ratios.items(),
                          key=lambda x: abs(x[1] - height / width))
 
         return key if columns == 1 else {key: value}
 
-    def get_positions(self, count, columns):
-        """Generate a list of WindowPositions according to the window count and
-        number of requested columns."""
-        rows = ceil(count / columns)
-        size = self.get_window_size(count, columns)
-
-        master_window = WindowPosition([], [self.origin_x, self.origin_y],
-                                       [self.width, self.master_height])
-        positions = [master_window]  # First window position is the master
-
-        for row in reversed(range(rows)):  # Reversed(bottom to top)
-            for column in range(columns):  # Left to right
-                position = [
-                    self.origin_x + (column * size[0]),
-                    self.origin_y + self.master_height + (row * size[1])
-                ]  # The y origin is flipped (0 is bottom, not top
-                location = [column, abs(rows - row - 1)]
-                positions.append(WindowPosition(location, position, size))
-
-        return positions
-
-    def get_window_size(self, count, columns):
+    def get_window_size(self, columns):
         """Return the size ([width, height]) for a window based on the number
-        of windows (count) and the column count (columns)."""
-        return [self.width / columns, self.u_height / ceil(count / columns)]
+        of slaves with the requested column count."""
+        return [self.width / columns, self.height / self.rows(columns)]
+
+    def rows(self, columns=None):
+        """Get the number of rows."""
+        return ceil(len(self.slaves) / (columns or self.columns))
 
     def update_bounds(self, bounds):
         """Use the output of `get_screen_bounds` to update screen bounds."""
-        self.origin_x = bounds[0]
-        self.origin_y = bounds[1]
+        self.origin = bounds[0:2]
         self.width = bounds[2]
-        self.height = bounds[3]
-        self.u_height = bounds[3] - self.master_height
+        self.height = bounds[3] - self.master_height
 
 
-class WindowPosition:
+class Window:
     """Represents the location on the grid of windows, origin relative to the
     screen, and window size."""
 
-    def __init__(self, location, origin, size):
-        self.location = location
-        self.origin = origin
-        self.size = size
+    def __init__(self, window_id):
+        self.location = self.origin = self.size = None
+        self.window_id = window_id
 
-    def move_window(self, window):
-        """Move a Terminal `window` to the bounds defined by current instance.
+    def move_window(self):
+        """Move the window to the bounds defined.
 
         When resized or moved, macOS honors the screen bounds at the current
         origin and won't resize past bounds. This means that if the window was
@@ -517,11 +499,19 @@ class WindowPosition:
         (definitely not out of bounds due to first resize), then resize again
         (initial resize might've hit bounds). Can't use `setBounds_` as it
         honors the window's minimum bounds."""
+        window = get_window(self.window_id)
         window.setVisible_(0)  # Pop tab if in a multi-tab window
         window.setSize_(self.size)
         window.setOrigin_(self.origin)
         window.setSize_(self.size)  # Don't worry; still really quick
         window.setFrontmost_(1)  # Above other windows
+
+    def set_color(self, color, foreground=False):
+        """Set the background of foreground color of the window."""
+        if foreground:
+            get_window(self.window_id).setNormalTextColor_(color)
+        else:
+            get_window(self.window_id).setBackgroundColor_(color)
 
 
 def args_init():
@@ -657,10 +647,7 @@ def get_screen(screen_number=0, reinit=False):
         result = subprocess.run(command, stdout=subprocess.PIPE, shell=True)
         return result.stdout.decode().strip()
 
-    from ScriptingBridge import NSApplication, NSBundle, NSScreen
-
-    # Hide the Python launcher icon
-    NSBundle.mainBundle().infoDictionary()['LSBackgroundOnly'] = '1'
+    from ScriptingBridge import NSApplication, NSScreen
 
     # Connect to the Window Server and run initializing code
     NSApplication.sharedApplication()
@@ -776,24 +763,32 @@ def main():
     """Main entry point"""
     args = args_init()
 
-    if args.reinit:  # Someone requested screen info
-        print(get_screen(args.screen))
-    elif args.mode is None:  # Spawn master window after some init code
-        screen = get_screen(args.screen)
-        if not screen.startswith('_'):  # An error message
-            sys.exit(screen)
-
-        command = ' '.join([quote(x) for x in args.item]) + ' --mode master'
-        term = open_terminal(
-            get_base_command(args).format(MASTER_BASE_TITLE, command))
-        term.setBackgroundColor_(get_color(args.mw_c, MASTER_COLOR))
-        term.setNormalTextColor_(get_color('255,255,255'))
-    elif args.mode == 'master':  # Master window: spawns and controls slaves
-        Master(args, get_base_command(args))
-    elif args.mode == 'slave':  # Slave window: runs command and reads input
+    if args.mode == 's':  # Slave window: runs command and reads input
         sock = socket_connect(args.socket)  # Start mirror keystrokes
         os.system(quote(args.command) + ' ' + quote(args.item[0]))
         sock.close()  # Close socket
+    else:
+        # To reduce ScriptingBridge import overhead, the launcher icon is hidden
+        # only when it'll get shown (i.e. when not a slave window).
+        from ScriptingBridge import NSBundle
+
+        # Hide the Python launcher icon
+        NSBundle.mainBundle().infoDictionary()['LSBackgroundOnly'] = '1'
+
+        if args.reinit:  # Someone requested screen info
+            print(get_screen(args.screen))
+        elif args.mode is None:  # Spawn master window after some init code
+            screen = get_screen(args.screen)
+            if not screen.startswith('_'):  # An error message
+                sys.exit(screen)
+
+            command = ' '.join([quote(x) for x in args.item]) + ' --mode m'
+            terminal = open_terminal(
+                get_base_command(args).format(MASTER_BASE_TITLE, command))
+            terminal.setBackgroundColor_(get_color(args.mw_c, MASTER_COLOR))
+            terminal.setNormalTextColor_(get_color('255,255,255'))
+        elif args.mode == 'm':  # Master window: spawns and controls slaves
+            Master(args)
 
 
 if __name__ == '__main__':
