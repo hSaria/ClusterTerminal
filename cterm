@@ -732,7 +732,7 @@ def prompt(question, default=''):
 
 
 def socket_connect(location):
-    """Connect to Unix socket at `location` and mirror key strokes."""
+    """Connect to a Unix socket at `location` and mirror key strokes."""
 
     def tap(sock):
         import fcntl
@@ -756,7 +756,7 @@ def socket_connect(location):
 
 
 def socket_create():
-    """Returns a Unix socket, created using a temporary file."""
+    """Returns a Unix listener socket, created using a temporary file."""
     from tempfile import _get_candidate_names, _get_default_tempdir
 
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
