@@ -69,7 +69,6 @@ class Master:
                       True)
         menu.add_bind(self.column_increase, '>', remain=True)
         menu.add_bind(self.exit, 'x', 'e[x]it')
-        menu.add_bind(self.send_text, 't', 'send [t]ext')
         menu.listen()
 
     def create_slaves(self, items):
