@@ -24,7 +24,7 @@ from shlex import quote, split
 from time import sleep
 
 BIN_LOCATION = quote(os.path.abspath(sys.argv[0]))
-MASTER_BASE_TITLE = 'ClusterTerminal Master – '
+MASTER_BASE_TITLE = 'ClusterTerminal Master'
 MASTER_COLOR = '84,30,22'
 MASTER_HEIGHT_MAX = 200
 MASTER_HEIGHT_MIN = 45
@@ -155,7 +155,8 @@ class Master:
 
     def update_title(self):
         """Update the title according the current list of slaves."""
-        title = MASTER_BASE_TITLE + ' '.join([x.item for x in self.slaves])
+        title = MASTER_BASE_TITLE + ' – ' + ' '.join(
+            [x.item for x in self.slaves])
         os.system('printf \'\\e]0;%s\\a\' \'{}\';'.format(title))
 
     def add_items(self):
@@ -783,9 +784,8 @@ def main():
             sys.exit(screen)
 
         command = ' '.join([quote(x) for x in args.item]) + ' --mode master'
-        title = MASTER_BASE_TITLE + ' '.join(args.item)
-
-        term = open_terminal(get_base_command(args).format(title, command))
+        term = open_terminal(
+            get_base_command(args).format(MASTER_BASE_TITLE, command))
         term.setBackgroundColor_(get_color(args.mw_c, MASTER_COLOR))
         term.setNormalTextColor_(get_color('255,255,255'))
     elif args.mode == 'master':  # Master window: spawns and controls slaves
