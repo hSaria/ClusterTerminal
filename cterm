@@ -104,7 +104,7 @@ class Master:
 
     def socket_connected_check(self):
         """Check whether all connections to the socket as still active. Remove
-        the slaves with a dead connection."""
+        the slaves with a dead connection. Exit when all slaves are dead."""
 
         def check():
             while True:
