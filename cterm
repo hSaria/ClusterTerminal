@@ -36,7 +36,7 @@ SLAVE_COLOR = '0,0,0'
 SLAVE_DISABLED_COLOR = '30,30,30'
 SLAVE_SELECTED_SHIFT = '0,0,60'
 SOCKET_ALIVE_INTERVAL = 0.5  # How often to check for open sockets
-SOCKET_TIMEOUT = 0.0001  # Used to check if socket is still alive
+SOCKET_TIMEOUT_DEAD = 0.0001  # Used to check if socket is still alive
 
 
 class Master:
@@ -323,7 +323,7 @@ class Slave:
         self.window_position = None
 
         self.conn, _ = sock.accept()
-        self.conn.settimeout(SOCKET_TIMEOUT)  # For checking if socket is alive
+        self.conn.settimeout(SOCKET_TIMEOUT_DEAD)  # For socket state check
 
         # The text color is set to white in case it's someting else
         self.tab.setNormalTextColor_(get_color('255,255,255'))
