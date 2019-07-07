@@ -8,7 +8,7 @@ Todo:
     * Menu bind -> send text: add round-robin text
 """
 
-# pylint: disable=no-name-in-module  # ScriptingBridge is dynamically built
+# pylint: disable=no-name-in-module  # ScriptingBridge is run-time built
 # pylint: disable=broad-except  # Don't care about which exception; cleanup
 
 import os
