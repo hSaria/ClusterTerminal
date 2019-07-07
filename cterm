@@ -18,7 +18,6 @@ import socket
 import sys
 import termios
 import threading
-from math import ceil
 from shlex import quote, split
 from time import sleep
 
@@ -473,6 +472,7 @@ class Screen:
     def rows(self, columns=None):
         """Get the number of rows using the `columns` keyword if supplied.
         Otherwise, using the current number of columns."""
+        from math import ceil
         return ceil(len(self.slaves) / (columns or self.columns))
 
     def update_bounds(self, bounds):
