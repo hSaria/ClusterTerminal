@@ -34,7 +34,7 @@ which will expand to:
 
 > You could've also used `cterm "ssh -l 'some user'" host1 host2` to get the same outcome; I only escaped quotes to demo purposes.
 
-## Item arguments
+## Item Arguments
 
 Similar to a command, you can pass per-item arguments (again, beware of character escaping):
 
@@ -45,7 +45,7 @@ which will expand to:
     ssh -p 1022 host1
     ssh -p 2022 host2
 
-## Tips
+# Tips
 
 You might want to set up an alias for cluster ssh in your `~/.bash_profile`. For instance, `alias cssh="cterm ssh"`, and then call it using `cssh host1 host2`.
 
