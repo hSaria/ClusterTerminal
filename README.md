@@ -32,7 +32,7 @@ which will expand to:
     ssh -l "some user" host1
     ssh -l "some user" host2
 
-> You could've also used `cterm 'ssh -l "some user"' host1 host2` to get the same outcome; I only escaped quotes to demo purposes.
+> You could've also used `cterm "ssh -l 'some user'" host1 host2` to get the same outcome; I only escaped quotes to demo purposes.
 
 ## Item arguments
 
