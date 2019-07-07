@@ -5,7 +5,6 @@ not as a substitute for automation frameworks.
 
 Todo:
     * Argument: Command arguments
-    * Menu bind -> send text: add round-robin text
 """
 
 # pylint: disable=no-name-in-module  # ScriptingBridge is run-time built
@@ -203,9 +202,22 @@ class Master:
             for slave in self.slaves:
                 slave.send(str(slave.item))
 
+        def send_round_robin():
+            from itertools import cycle
+
+            items = prompt('Items')
+
+            if items.strip() != '':
+                items = split(items)  # shelx.split to get list of args
+                slaves = [x for x in self.slaves if x.status['enabled']]
+
+                for item, slave in zip(cycle(items), slaves):
+                    slave.send(str(item))
+
         menu = Menu()
         menu.add_bind(send_id, 'i', '[i]d')
         menu.add_bind(send_item, 't', 'i[t]em')
+        menu.add_bind(send_round_robin, 'r', '[r]ound-robin')
         menu.main()
 
     def socket_connected_check(self):
