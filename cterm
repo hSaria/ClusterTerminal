@@ -775,7 +775,7 @@ def main():
 
     if args.mode == 's':  # Slave window: runs command and reads input
         sock = socket_connect(args.socket)  # Start mirror keystrokes
-        os.system(quote(args.command) + ' ' + quote(args.item[0]))
+        os.system(args.command + ' ' + args.item[0])
         sock.close()  # Close socket
     else:
         # To reduce ScriptingBridge import overhead, the launcher icon is hidden
