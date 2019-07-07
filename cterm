@@ -102,21 +102,18 @@ class Master:
 
         def update_selection(move_x, move_y):
             if self.refresh_selection():
-                return  # Selection changed; leave
+                return  # Selection already changed; don't bother looking
 
-            # Maximum number of steps to attempt to reach the next window
-            max_steps = max(self.screen.rows(), self.screen.columns) + 1
+            # If a slave has been closed without the windows getting rearranged,
+            # locate the next slave along the requested move direction
+            max_steps = max(sum([x.window.location for x in self.slaves], []))
 
-            for i in range(1, max_steps):
+            for i in range(1, max_steps + 1):
                 pos_x = self.selected.window.location[0] + move_x * i
                 pos_y = self.selected.window.location[1] + move_y * i
 
-                # Prevent out of bounds
-                pos_x = max(min(self.screen.columns - 1, pos_x), 0)
-                pos_y = max(min(self.screen.rows() - 1, pos_y), 0)
-
                 slave = self.find_slave([pos_x, pos_y])
-                if slave is not None:  # Found new selection
+                if slave not in [None, self.selected]:  # Found new selection
                     self.selected.update_state(selected=False)
                     self.selected = slave
                     self.selected.update_state(selected=True)
