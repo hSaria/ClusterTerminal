@@ -471,7 +471,8 @@ class Screen:
         return [self.width / columns, self.height / self.rows(columns)]
 
     def rows(self, columns=None):
-        """Get the number of rows."""
+        """Get the number of rows using the `columns` keyword if supplied.
+        Otherwise, using the current number of columns."""
         return ceil(len(self.slaves) / (columns or self.columns))
 
     def update_bounds(self, bounds):
