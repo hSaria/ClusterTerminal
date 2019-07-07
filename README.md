@@ -16,6 +16,35 @@ The most common use case is controlling multiple SSH sessions simultaneously:
 
     cterm ssh host1 host2
 
+In addition to the master window, the above will create two slaves windows, like so:
+
+    ssh host1
+    ssh host2
+
+## Command Arguments
+
+If you want to pass arguments to the command, include it as part of the command. Beware of character escaping where necessary. For example:
+
+    cterm "ssh -l \"some user\"" host1 host2
+
+which will expand to:
+
+    ssh -l "some user" host1
+    ssh -l "some user" host2
+
+> You could've also used `cterm 'ssh -l "some user"' host1 host2` to get the same outcome; I only escaped quotes to demo purposes.
+
+## Item arguments
+
+Similar to a command, you can pass per-item arguments (again, beware of character escaping):
+
+    cterm ssh "\-p 1022 host1" "\-p 2022 host2"
+
+which will expand to:
+
+    ssh -p 1022 host1
+    ssh -p 2022 host2
+
 ## Tips
 
 You might want to set up an alias for cluster ssh in your `~/.bash_profile`. For instance, `alias cssh="cterm ssh"`, and then call it using `cssh host1 host2`.
