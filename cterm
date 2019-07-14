@@ -34,7 +34,6 @@ TERMINAL_ATTRIBS = termios.tcgetattr(sys.stdin.fileno())  # Initial attributes
 
 class Master:
     """The brain of the operation where the orchestration happens."""
-
     def __init__(self, args):
         # Asumption: Launcher checked screen ID before creating master window
         height = min(max(MASTER_HEIGHT_MIN, args.mw_h), MASTER_HEIGHT_MAX)
@@ -95,7 +94,6 @@ class Master:
 
     def enable_windows(self):
         """Menu bind for managing which windows are enabled."""
-
         def update_selection(move_x, move_y):
             if self.refresh_selection():
                 return  # Selection already changed; don't bother looking
@@ -190,7 +188,6 @@ class Master:
 
     def send_text(self):
         """Send relative text to each slave."""
-
         def send_id():
             for slave in self.slaves:
                 slave.send(str(slave.sid))
@@ -220,7 +217,6 @@ class Master:
     def socket_connected_check(self):
         """Start a thread to check whether all socket connections are alive.
         Remove slaves with a dead connection. Exit when all slaves are dead."""
-
         def check():
             while True:
                 dead_slaves = []
@@ -247,7 +243,6 @@ class Master:
 
     def sort_slaves(self):
         """Sort the slave windows."""
-
         def by_id():
             self.slaves.sort(key=lambda x: x.sid)
             self.screen.arrange_windows()
@@ -329,7 +324,6 @@ class Slave:
 
 class Menu:
     """A menuing system that uses a list of "binds" for navigation."""
-
     def __init__(self, send=None):
         self.binds = []
         self.send = send
@@ -392,7 +386,6 @@ class Menu:
 
 class Screen:
     """Represent a screen and its bounds"""
-
     def __init__(self, master_height, master_window, screen_id, slaves):
         self.master_height = master_height
         self.master_window = master_window
@@ -491,7 +484,6 @@ class Screen:
 class Window:
     """Represents the location on the grid of windows, origin relative to the
     screen, and window size."""
-
     def __init__(self, window_id):
         self.location = self.origin = self.size = None
         self.window_id = window_id
@@ -723,7 +715,6 @@ def prompt(question, default=''):
 
 def socket_connect(location):
     """Connect to a Unix socket at `location` and mirror key strokes."""
-
     def tap(sock):
         import fcntl
         try:
