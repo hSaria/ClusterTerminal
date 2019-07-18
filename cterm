@@ -260,7 +260,9 @@ class Master:
         """Update the title according the current list of slaves."""
         title = MASTER_BASE_TITLE + ' – ' + ' '.join(
             [x.item for x in self.slaves])
-        os.system('printf \'\\e]0;%s\\a\' \'{}\';'.format(title))
+        # Need to run a new process as this may be called from a thread when
+        # main has the fd's locked (won't update until released)
+        os.system('printf \'\\e]0;{}\\a\';'.format(title))
 
 
 class Slave:
