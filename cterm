@@ -302,26 +302,31 @@ class Slave:
 
     def update_state(self, enabled=None, selected=None):
         """update the state of the slave and, accordingly, its window color."""
+        changed = False
+
         if enabled is not None:
+            changed = changed or self.status['enabled'] != enabled
             self.status['enabled'] = enabled
         if selected is not None:
+            changed = changed or self.status['selected'] != selected
             self.status['selected'] = selected
 
-        if self.status['selected']:
-            shift_r = self.colors['selected_shift'].redComponent()
-            shift_g = self.colors['selected_shift'].greenComponent()
-            shift_b = self.colors['selected_shift'].blueComponent()
-        else:
-            shift_r = shift_g = shift_b = 0
+        if changed:
+            if self.status['selected']:
+                shift_r = self.colors['selected_shift'].redComponent()
+                shift_g = self.colors['selected_shift'].greenComponent()
+                shift_b = self.colors['selected_shift'].blueComponent()
+            else:
+                shift_r = shift_g = shift_b = 0
 
-        color = self.colors['normal'] if self.status[
-            'enabled'] else self.colors['disabled']
-        color = get_color('{},{},{}'.format(
-            int((color.redComponent() + shift_r) * 255),
-            int((color.greenComponent() + shift_g) * 255),
-            int((color.blueComponent() + shift_b) * 255)))
+            color = self.colors['normal'] if self.status[
+                'enabled'] else self.colors['disabled']
+            color = get_color('{},{},{}'.format(
+                int((color.redComponent() + shift_r) * 255),
+                int((color.greenComponent() + shift_g) * 255),
+                int((color.blueComponent() + shift_b) * 255)))
 
-        self.window.set_color(color)
+            self.window.set_color(color)
 
 
 class Menu:
