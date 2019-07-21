@@ -292,7 +292,7 @@ class Slave:
 
         # The text color is set to white in case the default is something else
         self.window.set_color(get_color('255,255,255'), True)
-        self.update_state()  # Update color
+        self.update_state(force=True)  # Update color
 
     def send(self, string):
         """Send `string` to the slave's window."""
@@ -300,7 +300,7 @@ class Slave:
             for char in string:
                 self.conn.send(str.encode(char))
 
-    def update_state(self, enabled=None, selected=None):
+    def update_state(self, enabled=None, selected=None, force=False):
         """update the state of the slave and, accordingly, its window color."""
         changed = False
 
@@ -311,7 +311,7 @@ class Slave:
             changed = changed or self.status['selected'] != selected
             self.status['selected'] = selected
 
-        if changed:
+        if changed or force:
             if self.status['selected']:
                 shift_r = self.colors['selected_shift'].redComponent()
                 shift_g = self.colors['selected_shift'].greenComponent()
