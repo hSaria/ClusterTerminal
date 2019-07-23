@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """ClusterTerminal (`cterm`) forwards all keystrokes from a master window to
 multiple slave windows. Use `cterm` as a method for performing ad hoc tasks,
-not as a substitute for automation frameworks.
-"""
+not as a substitute for automation frameworks."""
 
 # pylint: disable=no-name-in-module  # ScriptingBridge is run-time built
 # pylint: disable=broad-except  # Don't care about which exception; cleanup
@@ -84,7 +83,7 @@ class Master:
                 sleep(self.args.pause / 1000)
 
     def delete_slave(self, slaves):
-        """Remove slave (or list of slaves) from master"""
+        """Remove slave (or list of slaves) from master."""
         for slave in slaves if isinstance(slaves, list) else [slaves]:
             try:
                 self.slaves.remove(slave)
@@ -392,7 +391,7 @@ class Menu:
 
 
 class Screen:
-    """Represent a screen and its bounds"""
+    """Represent a screen and its bounds."""
     def __init__(self, master_height, master_window, screen_id, slaves):
         self.master_height = master_height
         self.master_window = master_window
@@ -521,7 +520,7 @@ class Window:
 
 
 def args_init():
-    """Initialzes arguments and returns the output of `parse_args`"""
+    """Initialzes arguments and returns the output of `parse_args`."""
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -599,8 +598,7 @@ def get_base_command(args):
     """Returns a string containing the command to be used as a format string.
 
     Parameters:
-        args (argparse.Namespace): The arguments returns from `args_init`.
-    """
+        args (argparse.Namespace): The arguments returns from `args_init`."""
     carried = ['history -d $(($HISTCMD-1));']  # Remove from history
     carried.append('clear && printf \'\\e[3J\';')  # Clear screen
     carried.append('printf \'\\e]0;%s\\a\' \'{}\';')  # Title format field
@@ -682,7 +680,7 @@ def get_screen_bounds(details):
 
 
 def get_terminal():
-    """Returns the SBApplication for the Terminal bundle"""
+    """Returns the SBApplication for the Terminal bundle."""
     from ScriptingBridge import SBApplication
     return SBApplication.applicationWithBundleIdentifier_('com.apple.Terminal')
 
@@ -765,7 +763,7 @@ def tc_set(settings):
 
 
 def main():
-    """Main entry point"""
+    """Main entry point."""
     args = args_init()
 
     if args.mode == 's':  # Slave window: runs command and reads input
