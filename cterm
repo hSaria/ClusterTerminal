@@ -589,7 +589,7 @@ def args_init():
 
 def cprint(string=None):
     """Clear screen and print `string` if supplied."""
-    print('\033[2J\033[3J\033[H', end='')
+    print('\x1b[2J\x1b[3J\x1b[H', end='')
     if string is not None:
         print(string, end='', flush=True)
 
