@@ -9,7 +9,7 @@ with open('README.md', 'r') as f:
 setup(
     name='cterm',
     author='hSaria',
-    author_email='ping@heysaria.com',
+    author_email='sariahajjar@gmail.com',
     classifiers=[
         'Intended Audience :: System Administrators',
         'License :: OSI Approved :: MIT License', 'Operating System :: MacOS',
